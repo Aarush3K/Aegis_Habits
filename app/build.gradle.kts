@@ -1,7 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
-    id("com.google.devtools.ksp")      //lowk forgot what i added this for
+    alias(libs.plugins.ksp)   //lowk forgot what i added this for
 }
 
 android {
@@ -73,4 +73,8 @@ dependencies {
     ksp("androidx.room:room-compiler:$roomVersion")         //for Habit and HabitCompletion
 
     implementation("com.google.code.gson:gson:2.10.1")     //for converters.kt
+
+    implementation(libs.room.runtime)
+    implementation(libs.room.ktx)
+    ksp(libs.room.compiler)  //for room plugin
 }
