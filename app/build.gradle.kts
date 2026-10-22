@@ -59,6 +59,7 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
+    // Aahan Changed lines 63 to 68. 63 to 66 helps in the home screen widgets and 67 to 68 helps in the background reminders
     // --- Jetpack Glance (For Home-Screen Widgets) ---
     implementation("androidx.glance:glance-appwidget:1.1.0")
     implementation("androidx.glance:glance-material3:1.1.0")
