@@ -48,4 +48,56 @@ class HabitRepository(
     fun getCompletionsForHabit(habitId: Long): Flow<List<HabitCompletion>> {
         return completionDao.getCompletionsForHabit(habitId)
     }
+
+    // Toggle completion for a specific habit on a given ISO date (e.g. "YYYY-MM-DD")
+    suspend fun toggleHabitCompletion(habitId: Long, dateString: String) {
+        val isCompleted = completionDao.isHabitCompletedOnDate(habitId, dateString)
+        if (isCompleted) {
+            completionDao.deleteCompletionByDate(habitId, dateString)
+        } else {
+            completionDao.insertCompletion(
+                HabitCompletion(habitId = habitId, dateString = dateString)
+            )
+        }
+    }
+
+    // Helper method to calculate current streak from a list of completed ISO dates
+    fun calculateCurrentStreak(completedDates: List<String>): Int {
+        if (completedDates.isEmpty()) return 0
+
+        val sortedDates = completedDates
+            .mapNotNull { runCatching { java.time.LocalDate.parse(it) }.getOrNull() }
+            .sortedDescending()
+
+        if (sortedDates.isEmpty()) return 0
+
+        val today = java.time.LocalDate.now()
+        val yesterday = today.minusDays(1)
+
+        // Check if the streak is active (completed today or yesterday)
+        val latestDate = sortedDates.first()
+        if (latestDate != today && latestDate != yesterday) {
+            return 0
+        }
+
+        var streak = 0
+        var expectedDate = latestDate
+
+        for (date in sortedDates.distinct()) {
+            if (date == expectedDate) {
+                streak++
+                expectedDate = expectedDate.minusDays(1)
+            } else if (date.isBefore(expectedDate)) {
+                break
+            }
+        }
+
+        return streak
+    }
+
+    // --- Vault Export Helpers ---
+
+    suspend fun getAllCompletions(): List<HabitCompletion> {
+        return completionDao.getAllCompletions()
+    }
 }
