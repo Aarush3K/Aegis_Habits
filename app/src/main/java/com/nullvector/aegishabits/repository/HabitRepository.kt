@@ -6,7 +6,7 @@ import com.nullvector.aegishabits.model.Habit
 import com.nullvector.aegishabits.model.HabitCompletion
 import kotlinx.coroutines.flow.Flow
 
-class HabitRepository(
+open class HabitRepository(
     private val habitDao: HabitDao,
     private val completionDao: CompletionDao
 ) {
@@ -19,25 +19,25 @@ class HabitRepository(
         return habitDao.getHabitById(id)
     }
 
-    suspend fun insertHabit(habit: Habit): Long {
+    open suspend fun insertHabit(habit: Habit): Long {
         return habitDao.insertHabit(habit)
     }
 
-    suspend fun updateHabit(habit: Habit) {
+    open suspend fun updateHabit(habit: Habit) {
         habitDao.updateHabit(habit)
     }
 
-    suspend fun deleteHabit(habit: Habit) {
+    open suspend fun deleteHabit(habit: Habit) {
         habitDao.deleteHabit(habit)
     }
 
     // --- Completion Operations ---
 
-    suspend fun insertCompletion(completion: HabitCompletion) {
+    open suspend fun insertCompletion(completion: HabitCompletion) {
         completionDao.insertCompletion(completion)
     }
 
-    suspend fun deleteCompletion(completion: HabitCompletion) {
+    open suspend fun deleteCompletion(completion: HabitCompletion) {
         completionDao.deleteCompletion(completion)
     }
 
