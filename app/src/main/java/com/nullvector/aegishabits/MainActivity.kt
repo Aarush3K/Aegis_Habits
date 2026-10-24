@@ -11,17 +11,37 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.lifecycle.ViewModelProvider
+import com.nullvector.aegishabits.data.AppDatabase
+import com.nullvector.aegishabits.repository.HabitRepository
 import com.nullvector.aegishabits.ui.theme.AegisHabitsTheme
+import com.nullvector.aegishabits.viewmodel.HabitViewModel
+import com.nullvector.aegishabits.viewmodel.HabitViewModelFactory
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        //Initializing Room Database
+        val database = AppDatabase.getDatabase(this)
+
+        //Initializing Repository with DAOs
+        val repository = HabitRepository(
+            habitDao = database.habitDao(),
+            completionDao = database.completionDao()
+        )
+
+        //Creating ViewModel using our custom Factory
+        val factory = HabitViewModelFactory(repository)
+        val habitViewModel = ViewModelProvider(this, factory)[HabitViewModel::class.java]
+
         setContent {
             AegisHabitsTheme {
-                Scaffold( modifier = Modifier.fillMaxSize() ) { innerPadding ->
+                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+                    // Pass habitViewModel to your main UI screen/composable here
                     Greeting(
-                        name = "Android",
+                        name = "Aegis Habits",
                         modifier = Modifier.padding(innerPadding)
                     )
                 }
