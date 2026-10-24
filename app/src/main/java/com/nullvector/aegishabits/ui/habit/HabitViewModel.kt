@@ -4,8 +4,9 @@ import android.app.Application
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.nullvector.aegishabits.data.ChronosDatabase
+import com.nullvector.aegishabits.data.AppDatabase
 import com.nullvector.aegishabits.model.Frequency
+import com.nullvector.aegishabits.model.FrequencyType
 import com.nullvector.aegishabits.model.Habit
 import com.nullvector.aegishabits.repository.HabitRepository
 import kotlinx.coroutines.flow.Flow
@@ -21,18 +22,16 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
-/** One row on the dashboard: a habit, whether it is ticked off today, and its current streak. */
 data class HabitUiItem(
     val habit: Habit,
     val isCompleted: Boolean,
-    val streak: Int = 0, // consecutive days (weeks for WEEKLY habits)
+    val streak: Int = 0,
 )
 
-/** Everything the screen needs to draw itself. */
 data class HabitUiState(
     val isLoading: Boolean = true,
     val habits: List<HabitUiItem> = emptyList(),
-    val message: String? = null, // one-shot error/info text for a Snackbar
+    val message: String? = null,
 ) {
     val completedCount: Int get() = habits.count { it.isCompleted }
     val totalCount: Int get() = habits.size
@@ -42,30 +41,24 @@ class HabitViewModel(
     private val repository: HabitRepository,
 ) : ViewModel() {
 
-    // Date key used for completion records, e.g. "2026-10-23"
     private val dateKey: String = todayKey()
-
     private val message = MutableStateFlow<String?>(null)
 
-    /** Habits that are due today, each flagged done / not done with its streak. Updates live from Room. */
     fun getHabitsForToday(): Flow<List<HabitUiItem>> =
         combine(
-            repository.getAllHabits(),
-            repository.getAllCompletions(),
-        ) { habits, completions ->
-            // habitId -> set of "yyyy-MM-dd" dates it was completed on
-            val datesByHabit: Map<Long, Set<String>> = completions
-                .groupBy({ it.habitId }, { it.date })
-                .mapValues { it.value.toSet() }
+            repository.allHabits,
+            repository.getCompletionsForDate(dateKey),
+        ) { habits, todayCompletions ->
+            val completedHabitIds = todayCompletions.map { it.habitId }.toSet()
 
             habits
                 .filter { it.isDueToday() }
                 .map { habit ->
-                    val doneDates = datesByHabit[habit.id].orEmpty()
+                    val isDone = habit.id in completedHabitIds
                     HabitUiItem(
                         habit = habit,
-                        isCompleted = dateKey in doneDates,
-                        streak = streakFor(habit, doneDates),
+                        isCompleted = isDone,
+                        streak = 0,
                     )
                 }
         }
@@ -81,16 +74,20 @@ class HabitViewModel(
                 initialValue = HabitUiState(isLoading = true),
             )
 
-    fun addHabit(name: String, color: Int, icon: String, frequency: Frequency) {
-        val trimmed = name.trim()
+    fun addHabit(title: String, description: String = "", frequency: Frequency) {
+        val trimmed = title.trim()
         if (trimmed.isEmpty()) {
             message.value = "Habit name can't be empty"
             return
         }
         viewModelScope.launch {
             try {
-                repository.addHabit(
-                    Habit(name = trimmed, color = color, icon = icon, frequency = frequency)
+                repository.insertHabit(
+                    Habit(
+                        title = trimmed,
+                        description = description,
+                        frequency = frequency
+                    )
                 )
             } catch (e: Exception) {
                 message.value = "Couldn't save habit"
@@ -101,9 +98,19 @@ class HabitViewModel(
     fun toggleCompletion(habitId: Long) {
         viewModelScope.launch {
             try {
-                repository.toggleCompletion(habitId, dateKey)
+                repository.toggleHabitCompletion(habitId, dateKey)
             } catch (e: Exception) {
                 message.value = "Couldn't update habit"
+            }
+        }
+    }
+
+    fun deleteHabit(habit: Habit) {
+        viewModelScope.launch {
+            try {
+                repository.deleteHabit(habit)
+            } catch (e: Exception) {
+                message.value = "Couldn't delete habit"
             }
         }
     }
@@ -112,33 +119,10 @@ class HabitViewModel(
         message.value = null
     }
 
-    // ---- helpers ----
-
-    private fun Habit.isDueToday(): Boolean = when (frequency) {
-        Frequency.DAILY, Frequency.CUSTOM -> true
-        // WEEKLY habits show up on the same weekday they were created
-        Frequency.WEEKLY -> weekdayOf(createdAt) == weekdayOf(System.currentTimeMillis())
+    private fun Habit.isDueToday(): Boolean = when (frequency.type) {
+        FrequencyType.DAILY, FrequencyType.CUSTOM -> true
+        FrequencyType.WEEKLY -> weekdayOf(createdAt) == weekdayOf(System.currentTimeMillis())
     }
-
-    /**
-     * Counts consecutive completed days (or weeks for WEEKLY) going backwards.
-     * If today isn't done yet the streak isn't broken: counting starts from the previous period.
-     */
-    private fun streakFor(habit: Habit, doneDates: Set<String>): Int {
-        if (doneDates.isEmpty()) return 0
-        val stepDays = if (habit.frequency == Frequency.WEEKLY) 7 else 1
-        val cal = Calendar.getInstance()
-        if (keyOf(cal) !in doneDates) cal.add(Calendar.DAY_OF_YEAR, -stepDays)
-        var streak = 0
-        while (keyOf(cal) in doneDates) {
-            streak++
-            cal.add(Calendar.DAY_OF_YEAR, -stepDays)
-        }
-        return streak
-    }
-
-    private fun keyOf(cal: Calendar): String =
-        SimpleDateFormat("yyyy-MM-dd", Locale.US).format(cal.time)
 
     private fun weekdayOf(millis: Long): Int =
         Calendar.getInstance().apply { timeInMillis = millis }.get(Calendar.DAY_OF_WEEK)
@@ -147,14 +131,10 @@ class HabitViewModel(
         SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
 }
 
-/**
- * Builds the ViewModel with the real repository.
- * If Member 1 changes constructor names, this is the ONLY place to edit.
- */
 class HabitViewModelFactory(private val app: Application) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        val db = ChronosDatabase.getInstance(app)
+        val db = AppDatabase.getDatabase(app)
         val repository = HabitRepository(db.habitDao(), db.completionDao())
         return HabitViewModel(repository) as T
     }
