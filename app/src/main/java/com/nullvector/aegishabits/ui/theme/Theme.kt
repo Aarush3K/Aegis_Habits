@@ -56,3 +56,38 @@ fun AegisHabitsTheme(
         content = content
     )
 }
+
+private val DarkScheme = darkColorScheme(
+    primary = AegisCyan,
+    onPrimary = Color(0xFF00212E),
+    secondary = AegisViolet,
+    background = NavyDark,
+    onBackground = Color(0xFFE6EAF2),
+    surface = SurfaceDark,
+    onSurface = Color(0xFFE6EAF2),
+    surfaceVariant = SurfaceVariantDark,
+    onSurfaceVariant = Color(0xFFB4BED2),
+)
+
+private val LightScheme = lightColorScheme(
+    primary = AegisBlue,
+    onPrimary = Color.White,
+    secondary = AegisViolet,
+    background = BackgroundLight,
+    onBackground = Color(0xFF111827),
+    surface = SurfaceLight,
+    onSurface = Color(0xFF111827),
+    surfaceVariant = SurfaceVariantLight,
+    onSurfaceVariant = Color(0xFF4B5567),
+)
+
+@Composable
+fun AegisHabitsTheme(
+    darkTheme: Boolean = isSystemInDarkTheme(),
+    content: @Composable () -> Unit,
+) {
+    MaterialTheme(
+        colorScheme = if (darkTheme) DarkScheme else LightScheme,
+        content = content,
+    )
+}
