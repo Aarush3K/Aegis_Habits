@@ -12,7 +12,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.AegisHabits">
         <receiver
-            android:name=".ui.widget.WidgetActionReceiver"
+            android:name=".ui.widget.HabitWidgetReceiver"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
