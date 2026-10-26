@@ -87,6 +87,10 @@ import com.nullvector.aegishabits.viewmodel.HabitUiState
 import com.nullvector.aegishabits.viewmodel.HabitViewModel
 import com.nullvector.aegishabits.viewmodel.HabitViewModelFactory
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 
 class HabitActivity : ComponentActivity() {
 
@@ -157,8 +161,27 @@ fun HabitScreen(viewModel: HabitViewModel) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var showAddDialog by rememberSaveable { mutableStateOf(false) }
     var selectedHabitForAction by remember { mutableStateOf<HabitUiItem?>(null) }
+    var habitToEdit by remember { mutableStateOf<HabitUiItem?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
+
+    // Inside HabitScreen:
+    LaunchedEffect(Unit) {
+        viewModel.refreshDate()
+    }
+
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                viewModel.refreshDate() // Triggers date refresh whenever app comes to foreground
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     val pagerState = rememberPagerState(
         initialPage = state.selectedTab.ordinal,
@@ -200,7 +223,6 @@ fun HabitScreen(viewModel: HabitViewModel) {
             )
         },
         bottomBar = {
-            // Material3 NavigationBar using proper icons instead of text labels
             NavigationBar {
                 HabitTab.entries.forEach { tab ->
                     val isSelected = tab == state.selectedTab
@@ -219,6 +241,9 @@ fun HabitScreen(viewModel: HabitViewModel) {
                         },
                         icon = {
                             Icon(imageVector = icon, contentDescription = tab.title)
+                        },
+                        label = {
+                            Text(tab.title)
                         }
                     )
                 }
@@ -260,6 +285,7 @@ fun HabitScreen(viewModel: HabitViewModel) {
         }
     }
 
+    // Add Habit Dialog
     if (showAddDialog) {
         AddHabitDialog(
             onDismiss = { showAddDialog = false },
@@ -270,10 +296,36 @@ fun HabitScreen(viewModel: HabitViewModel) {
         )
     }
 
+    // Edit Habit Dialog
+    habitToEdit?.let { item ->
+        AddHabitDialog(
+            initialHabit = item.habit,
+            onDismiss = { habitToEdit = null },
+            onConfirm = { name, color, icon, frequencyType, targetDays, customDays ->
+                val updatedHabit = item.habit.copy(
+                    title = name,
+                    color = color,
+                    icon = icon,
+                    frequency = item.habit.frequency.copy(
+                        type = frequencyType,
+                        customDaysOfWeek = customDays
+                    )
+                )
+                viewModel.updateHabit(updatedHabit)
+                habitToEdit = null
+            }
+        )
+    }
+
+    // Long Press Action Dialog
     selectedHabitForAction?.let { item ->
         HabitActionDialog(
             item = item,
             onDismiss = { selectedHabitForAction = null },
+            onEdit = {
+                habitToEdit = item
+                selectedHabitForAction = null
+            },
             onArchive = {
                 viewModel.archiveHabit(item.habit)
                 selectedHabitForAction = null
@@ -435,6 +487,7 @@ private fun EmptyState(tab: HabitTab, modifier: Modifier = Modifier) {
 private fun HabitActionDialog(
     item: HabitUiItem,
     onDismiss: () -> Unit,
+    onEdit: () -> Unit,
     onArchive: () -> Unit,
     onRestore: () -> Unit,
     onDelete: () -> Unit
@@ -446,6 +499,14 @@ private fun HabitActionDialog(
         title = { Text(item.habit.title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Edit Option
+                TextButton(
+                    onClick = onEdit,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Edit Habit", fontSize = 16.sp)
+                }
+
                 if (isArchived) {
                     TextButton(
                         onClick = onRestore,
@@ -461,6 +522,7 @@ private fun HabitActionDialog(
                         Text("Archive Habit", fontSize = 16.sp)
                     }
                 }
+
                 TextButton(
                     onClick = onDelete,
                     modifier = Modifier.fillMaxWidth()
@@ -475,29 +537,35 @@ private fun HabitActionDialog(
         }
     )
 }
-
 // ---------------------------------------------------------------------------
 // "Add habit" form
 // ---------------------------------------------------------------------------
 
 @Composable
 private fun AddHabitDialog(
+    initialHabit: Habit? = null,
     onDismiss: () -> Unit,
     onConfirm: (name: String, color: Int, icon: String, frequencyType: FrequencyType, targetDays: Int, customDays: List<Int>) -> Unit,
 ) {
-    var name by rememberSaveable { mutableStateOf("") }
-    var color by rememberSaveable { mutableIntStateOf(habitColors.first()) }
-    var icon by rememberSaveable { mutableStateOf(habitIcons.first()) }
-    var frequencyType by rememberSaveable { mutableStateOf(FrequencyType.DAILY) }
+    var name by rememberSaveable { mutableStateOf(initialHabit?.title ?: "") }
+    var color by rememberSaveable { mutableIntStateOf(initialHabit?.color ?: habitColors.first()) }
+    var icon by rememberSaveable { mutableStateOf(initialHabit?.icon ?: habitIcons.first()) }
+    var frequencyType by rememberSaveable {
+        mutableStateOf(initialHabit?.frequency?.type ?: FrequencyType.DAILY)
+    }
 
     val daysMapping = listOf(
         "M" to 2, "T" to 3, "W" to 4, "T" to 5, "F" to 6, "S" to 7, "S" to 1
     )
-    val selectedDays = remember { mutableStateListOf(2, 4, 6) }
+    val selectedDays = remember {
+        mutableStateListOf<Int>().apply {
+            addAll(initialHabit?.frequency?.customDaysOfWeek ?: listOf(2, 4, 6))
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("New Habit") },
+        title = { Text(if (initialHabit == null) "New Habit" else "Edit Habit") },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),

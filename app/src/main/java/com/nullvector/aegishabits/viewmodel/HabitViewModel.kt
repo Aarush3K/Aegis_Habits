@@ -16,7 +16,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import java.time.LocalDate
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 
 enum class HabitTab(val title: String) {
     TODAY("Today"),
@@ -46,6 +51,55 @@ class HabitViewModel(
     private val appContext: Context? = null
 ) : ViewModel() {
 
+    private val currentDate = MutableStateFlow(todayKey())
+    private val message = MutableStateFlow<String?>(null)
+    private val currentTab = MutableStateFlow(HabitTab.TODAY)
+
+    fun selectTab(tab: HabitTab) {
+        currentTab.value = tab
+    }
+
+    fun refreshDate() {
+        currentDate.value = todayKey()
+    }
+
+  fun getFilteredHabits(): Flow<List<HabitUiItem>> {
+        return combine(
+            repository.allHabits,
+            repository.allCompletions,
+            currentDate,
+            currentTab
+        ) { habits, allCompletions, todayDateKey, tab ->
+            // 1. Get completions strictly matching today's date key
+            val todayCompletedIds = allCompletions
+                .filter { it.dateString == todayDateKey }
+                .map { it.habitId }
+                .toSet()
+
+            // 2. Filter habits based on selected tab and current date
+            val filteredHabits = when (tab) {
+                HabitTab.TODAY -> habits.filter { !it.isArchived && it.isDueOn(todayDateKey) }
+                HabitTab.ALL -> habits.filter { !it.isArchived }
+                HabitTab.ARCHIVED -> habits.filter { it.isArchived }
+            }
+
+            // 3. Map habits to UI items with accurate streaks & completion status
+            filteredHabits.map { habit ->
+                val isDone = habit.id in todayCompletedIds
+                val habitCompletionDates = allCompletions
+                    .filter { it.habitId == habit.id }
+                    .map { it.dateString }
+                val currentStreak = repository.calculateCurrentStreak(habitCompletionDates)
+
+                HabitUiItem(
+                    habit = habit,
+                    isCompleted = isDone,
+                    streak = currentStreak,
+                )
+            }
+        }
+    }
+
     private val _message = MutableStateFlow<String?>(null)
     private val _selectedTab = MutableStateFlow(HabitTab.TODAY)
 
@@ -61,24 +115,8 @@ class HabitViewModel(
             }
         }
     }
-
-    // Expose habits mapped to HabitUiItem for Compose UI based on selected tab
-    val uiState: StateFlow<HabitUiState> = combine(
-        repository.allHabits,
-        repository.allCompletions,
-        _selectedTab,
-        _message
-    ) { habitList, completions, selectedTab, message ->
-        val todayStr = LocalDate.now().toString()
-        val today = LocalDate.now()
-
-        val filteredHabits = habitList.filter { habit ->
-            when (selectedTab) {
-                HabitTab.TODAY -> !habit.isArchived && isDueToday(habit, today)
-                HabitTab.ALL -> !habit.isArchived
-                HabitTab.ARCHIVED -> habit.isArchived
-            }
-        }
+   
+      
 
         val habitItems = filteredHabits.map { habit ->
             val habitCompletions = completions.filter { it.habitId == habit.id }
@@ -159,6 +197,18 @@ class HabitViewModel(
         }
     }
 
+
+    fun toggleHabit(habitId: Long) {
+        viewModelScope.launch {
+            try {
+                refreshDate()
+                repository.toggleHabitCompletion(habitId, currentDate.value)
+            } catch (e: Exception) {
+                message.value = "Couldn't update habit"
+            }
+        }
+    }
+
     fun archiveHabit(habit: Habit, context: Context? = null) {
         viewModelScope.launch {
             repository.updateHabit(habit.copy(isArchived = true))
@@ -166,7 +216,7 @@ class HabitViewModel(
             triggerWidgetUpdate(context)
         }
     }
-
+    
     fun restoreHabit(habit: Habit, context: Context? = null) {
         viewModelScope.launch {
             repository.updateHabit(habit.copy(isArchived = false))
@@ -202,32 +252,34 @@ class HabitViewModel(
         }
     }
 
-    private fun isDueToday(habit: Habit, today: LocalDate): Boolean {
-        return when (habit.frequency.type) {
-            FrequencyType.DAILY -> true
-            FrequencyType.WEEKLY -> {
-                val createdTime = if (habit.createdAt > 0L) habit.createdAt else System.currentTimeMillis()
-                val createdDayOfWeek = java.time.Instant.ofEpochMilli(createdTime)
-                    .atZone(java.time.ZoneId.systemDefault())
-                    .dayOfWeek
-                today.dayOfWeek == createdDayOfWeek
+    private fun Habit.isDueOn(dateString: String): Boolean = when (frequency.type) {
+        FrequencyType.DAILY -> true
+        FrequencyType.WEEKLY -> {
+            val createdTime = if (createdAt > 0L) createdAt else System.currentTimeMillis()
+            val createdDateKey = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(createdTime))
+            weekdayOf(createdDateKey) == weekdayOf(dateString)
+        }
+        FrequencyType.CUSTOM -> {
+            if (frequency.customDaysOfWeek.isNotEmpty()) {
+                weekdayOf(dateString) in frequency.customDaysOfWeek
+            } else {
+                true
             }
-            FrequencyType.CUSTOM -> {
-                if (habit.frequency.customDaysOfWeek.isEmpty()) {
-                    true
-                } else {
-                    val todayCustomCode = when (today.dayOfWeek) {
-                        java.time.DayOfWeek.MONDAY -> 2
-                        java.time.DayOfWeek.TUESDAY -> 3
-                        java.time.DayOfWeek.WEDNESDAY -> 4
-                        java.time.DayOfWeek.THURSDAY -> 5
-                        java.time.DayOfWeek.FRIDAY -> 6
-                        java.time.DayOfWeek.SATURDAY -> 7
-                        java.time.DayOfWeek.SUNDAY -> 1
-                    }
-                    todayCustomCode in habit.frequency.customDaysOfWeek
-                }
-            }
+        }
+    }
+
+    private fun weekdayOf(dateString: String): Int {
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        val date = sdf.parse(dateString) ?: Date()
+        return Calendar.getInstance().apply { time = date }.get(Calendar.DAY_OF_WEEK)
+    }
+
+    private fun todayKey(): String =
+        SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+
+    fun updateHabit(habit: Habit) {
+        viewModelScope.launch {
+            repository.updateHabit(habit)
         }
     }
 }
