@@ -1,12 +1,11 @@
 package com.nullvector.aegishabits.viewmodel
 
-import android.app.Application
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.nullvector.aegishabits.data.AppDatabase
 import com.nullvector.aegishabits.model.Frequency
 import com.nullvector.aegishabits.model.FrequencyType
 import com.nullvector.aegishabits.model.Habit
+import com.nullvector.aegishabits.model.HabitCompletion
 import com.nullvector.aegishabits.repository.HabitRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -43,25 +42,43 @@ class HabitViewModel(
     private val dateKey: String = todayKey()
     private val message = MutableStateFlow<String?>(null)
 
-    fun getHabitsForToday(): Flow<List<HabitUiItem>> =
-        combine(
+    fun getHabitsForToday(): Flow<List<HabitUiItem>> {
+        val firstTwoFlows = combine(
             repository.allHabits,
-            repository.getCompletionsForDate(dateKey),
-        ) { habits, completions ->
-            val completedHabitIds = completions.map { it.habitId }.toSet()
+            repository.getCompletionsForDate(dateKey)
+        ) { habits, todayCompletions ->
+            habits to todayCompletions
+        }
+
+        return combine(
+            firstTwoFlows,
+            repository.allCompletions
+        ) { pair, allCompletions ->
+            val habits = pair.first
+            val todayCompletions = pair.second
+            val completedHabitIds = todayCompletions.map { it.habitId }.toSet()
 
             habits
                 .filter { !it.isArchived && it.isDueToday() }
                 .map { habit ->
                     val isDone = habit.id in completedHabitIds
+
+                    // Gather all completion date strings for this habit
+                    val habitCompletionDates = allCompletions
+                        .filter { it.habitId == habit.id }
+                        .map { it.dateString }
+
+                    // Use repository's built-in streak calculator
+                    val currentStreak = repository.calculateCurrentStreak(habitCompletionDates)
+
                     HabitUiItem(
                         habit = habit,
                         isCompleted = isDone,
-                        streak = 0,
+                        streak = currentStreak,
                     )
                 }
         }
-
+    }
     val uiState: StateFlow<HabitUiState> =
         combine(getHabitsForToday(), message) { items, msg ->
             HabitUiState(isLoading = false, habits = items, message = msg)
@@ -127,20 +144,64 @@ class HabitViewModel(
             weekdayOf(createdTime) == weekdayOf(System.currentTimeMillis())
         }
         FrequencyType.CUSTOM -> {
-            // If specific days of the week are selected (e.g. Mon, Wed, Fri), check if today matches
             if (frequency.customDaysOfWeek.isNotEmpty()) {
                 val todayCalendarDay = Calendar.getInstance().get(Calendar.DAY_OF_WEEK)
-                // Note: Calendar.DAY_OF_WEEK uses 1=Sunday, 2=Monday...7=Saturday.
-                // Adjust mapping if your app treats 1=Monday. Assuming standard calendar indexing:
                 todayCalendarDay in frequency.customDaysOfWeek
             } else {
-                true // Fallback if no custom days are explicitly toggled
+                true
             }
         }
     }
+
     private fun weekdayOf(millis: Long): Int =
         Calendar.getInstance().apply { timeInMillis = millis }.get(Calendar.DAY_OF_WEEK)
 
     private fun todayKey(): String =
         SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+
+    private fun calculateStreakFromDates(dates: List<String>): Int {
+        if (dates.isEmpty()) return 0
+
+        val formatter = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        val sortedDates = dates.mapNotNull {
+            try { formatter.parse(it) } catch (e: Exception) { null }
+        }.sortedDescending()
+
+        if (sortedDates.isEmpty()) return 0
+
+        val cal = Calendar.getInstance()
+        val todayStr = formatter.format(cal.time)
+
+        cal.add(Calendar.DAY_OF_YEAR, -1)
+        val yesterdayStr = formatter.format(cal.time)
+
+        val latestDateStr = formatter.format(sortedDates.first())
+
+        // If not completed today or yesterday, the streak is broken
+        if (latestDateStr != todayStr && latestDateStr != yesterdayStr) {
+            return 0
+        }
+
+        var streak = 0
+        val checkCal = Calendar.getInstance()
+
+        // If today isn't completed yet, start checking backward from yesterday
+        if (latestDateStr == yesterdayStr) {
+            checkCal.add(Calendar.DAY_OF_YEAR, -1)
+        }
+
+        val uniqueDateSet = dates.toSet()
+
+        while (true) {
+            val checkStr = formatter.format(checkCal.time)
+            if (checkStr in uniqueDateSet) {
+                streak++
+                checkCal.add(Calendar.DAY_OF_YEAR, -1)
+            } else {
+                break
+            }
+        }
+
+        return streak
+    }
 }

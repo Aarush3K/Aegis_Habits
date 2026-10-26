@@ -63,6 +63,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nullvector.aegishabits.data.AppDatabase
 import com.nullvector.aegishabits.model.FrequencyType
+import com.nullvector.aegishabits.model.Habit
 import com.nullvector.aegishabits.repository.HabitRepository
 import com.nullvector.aegishabits.ui.theme.AegisHabitsTheme
 import com.nullvector.aegishabits.viewmodel.HabitUiItem
@@ -104,6 +105,29 @@ private fun FrequencyType.label(): String = when (this) {
     FrequencyType.DAILY -> "Daily"
     FrequencyType.WEEKLY -> "Weekly"
     FrequencyType.CUSTOM -> "Custom"
+}
+
+private fun Habit.frequencyLabel(): String {
+    return when (frequency.type) {
+        FrequencyType.DAILY -> "Daily"
+        FrequencyType.WEEKLY -> {
+            val createdTime = if (createdAt > 0L) createdAt else System.currentTimeMillis()
+            val dayName = java.text.SimpleDateFormat("EEEE", java.util.Locale.US).format(java.util.Date(createdTime))
+            "Every $dayName"
+        }
+        FrequencyType.CUSTOM -> {
+            if (frequency.customDaysOfWeek.isEmpty()) {
+                "Today"
+            } else {
+                val dayMap = mapOf(
+                    2 to "Mon", 3 to "Tue", 4 to "Wed",
+                    5 to "Thu", 6 to "Fri", 7 to "Sat", 1 to "Sun"
+                )
+                val sortedDays = frequency.customDaysOfWeek.sortedBy { if (it == 1) 8 else it }
+                sortedDays.mapNotNull { dayMap[it] }.joinToString(", ")
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -230,7 +254,7 @@ private fun HabitRow(item: HabitUiItem, onToggle: () -> Unit) {
                     textDecoration = if (item.isCompleted) TextDecoration.LineThrough else null,
                 )
                 Text(
-                    text = habit.frequency.type.label() + streakText(item),
+                    text = habit.frequencyLabel() + streakText(item),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -248,7 +272,7 @@ private fun streakText(item: HabitUiItem): String {
     if (item.streak <= 0) return ""
     val unit = if (item.habit.frequency.type == FrequencyType.WEEKLY) "week" else "day"
     val plural = if (item.streak == 1) "" else "s"
-    return "  ·  🔥 ${item.streak} $unit$plural streak"
+    return "  ·  ${item.streak} $unit$plural streak 🔥"
 }
 
 @Composable
