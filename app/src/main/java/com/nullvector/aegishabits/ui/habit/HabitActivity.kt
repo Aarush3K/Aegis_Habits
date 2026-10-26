@@ -91,6 +91,25 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.material3.Surface
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.core.tween
 
 class HabitActivity : ComponentActivity() {
 
@@ -188,18 +207,18 @@ fun HabitScreen(viewModel: HabitViewModel) {
         pageCount = { HabitTab.entries.size }
     )
 
-    // Sync Pager state when ViewModel tab changes externally
-    LaunchedEffect(state.selectedTab) {
-        if (pagerState.currentPage != state.selectedTab.ordinal) {
-            pagerState.animateScrollToPage(state.selectedTab.ordinal)
-        }
-    }
-
-    // Sync ViewModel tab when user swipes the pager
+    // 1. Instantly update ViewModel tab when swipe begins/changes
     LaunchedEffect(pagerState.currentPage) {
         val targetTab = HabitTab.entries[pagerState.currentPage]
         if (targetTab != state.selectedTab) {
             viewModel.selectTab(targetTab)
+        }
+    }
+
+// 2. Animate Pager when bottom bar item is clicked
+    LaunchedEffect(state.selectedTab) {
+        if (pagerState.currentPage != state.selectedTab.ordinal) {
+            pagerState.scrollToPage(state.selectedTab.ordinal)
         }
     }
 
@@ -267,16 +286,29 @@ fun HabitScreen(viewModel: HabitViewModel) {
         ) { page ->
             val pageTab = HabitTab.entries[page]
 
+            // Get the correct pre-calculated list for this specific page
+            val pageHabits = when (pageTab) {
+                HabitTab.TODAY -> state.todayHabits
+                HabitTab.ALL -> state.allHabitsList
+                HabitTab.ARCHIVED -> state.archivedHabitsList
+            }
+
+            // Create a local UI state copy for this page using its specific list
+            val pageState = state.copy(
+                habits = pageHabits,
+                selectedTab = pageTab
+            )
+
             Box(modifier = Modifier.fillMaxSize()) {
                 when {
-                    state.isLoading ->
+                    state.isLoading && pageHabits.isEmpty() ->
                         CircularProgressIndicator(Modifier.align(Alignment.Center))
 
-                    state.habits.isEmpty() ->
+                    pageHabits.isEmpty() ->
                         EmptyState(tab = pageTab, modifier = Modifier.align(Alignment.Center))
 
                     else -> HabitList(
-                        state = state,
+                        state = pageState,
                         onToggle = { habitId -> viewModel.toggleCompletion(habitId) },
                         onItemLongClick = { habitItem -> selectedHabitForAction = habitItem }
                     )
@@ -354,9 +386,16 @@ private fun HabitList(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         if (state.selectedTab == HabitTab.TODAY) {
-            item { ProgressHeader(done = state.completedCount, total = state.totalCount) }
+            item(key = "progress_header") {
+                ProgressHeader(done = state.completedCount, total = state.totalCount)
+            }
         }
-        items(state.habits, key = { it.habit.id }) { item ->
+
+        // Ensure unique key is passed here so Compose tracks items smoothly
+        items(
+            items = state.habits,
+            key = { item -> item.habit.id }
+        ) { item ->
             HabitRow(
                 item = item,
                 selectedTab = state.selectedTab,
@@ -369,7 +408,18 @@ private fun HabitList(
 
 @Composable
 private fun ProgressHeader(done: Int, total: Int) {
-    val fraction = if (total == 0) 0f else done.toFloat() / total
+    val targetFraction = if (total == 0) 0f else done.toFloat() / total
+
+    // Smoothly animate the progress fill when it changes
+    val animatedProgress by animateFloatAsState(
+        targetValue = targetFraction,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessLow
+        ),
+        label = "progress_animation"
+    )
+
     Column(Modifier.padding(bottom = 8.dp)) {
         Text(
             text = "$done of $total done today",
@@ -377,7 +427,7 @@ private fun ProgressHeader(done: Int, total: Int) {
         )
         Spacer(Modifier.height(8.dp))
         LinearProgressIndicator(
-            progress = { fraction },
+            progress = { animatedProgress }, // Pass the animated value here
             modifier = Modifier
                 .fillMaxWidth()
                 .height(8.dp)
@@ -385,7 +435,6 @@ private fun ProgressHeader(done: Int, total: Int) {
         )
     }
 }
-
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun HabitRow(
@@ -398,18 +447,61 @@ private fun HabitRow(
     val habitColor = Color(habit.color)
     val isTodayView = selectedTab == HabitTab.TODAY
 
+    // Optimistic completion state for instant checkbox feedback
+    var localCompleted by remember(item.isCompleted) { mutableStateOf(item.isCompleted) }
+
+    // Card press bounce animation
+    var isPressed by remember { mutableStateOf(false) }
+    val cardScale by animateFloatAsState(
+        targetValue = if (isPressed) 0.97f else 1.0f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "card_scale"
+    )
+
+    // Checkbox scale animation
+    val checkboxScale by animateFloatAsState(
+        targetValue = if (localCompleted) 1.25f else 1.0f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioHighBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "checkbox_scale"
+    )
+
+    // Smooth fade animation for the streak text + flame
+    val streakAlpha by animateFloatAsState(
+        targetValue = if (item.streak > 0) 1f else 0f,
+        animationSpec = tween(durationMillis = 300),
+        label = "streak_fade"
+    )
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .graphicsLayer {
+                scaleX = cardScale
+                scaleY = cardScale
+            }
             .clip(RoundedCornerShape(16.dp))
-            .combinedClickable(
-                onClick = { },
-                onLongClick = onLongClick
-            ),
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onPress = {
+                        isPressed = true
+                        tryAwaitRelease()
+                        isPressed = false
+                    },
+                    onLongPress = { onLongClick() }
+                )
+            },
         shape = RoundedCornerShape(16.dp),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
@@ -421,30 +513,68 @@ private fun HabitRow(
             ) {
                 Text(habit.icon, fontSize = 22.sp)
             }
+
             Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
+
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.Center
+            ) {
                 Text(
                     text = habit.title,
                     style = MaterialTheme.typography.titleMedium,
-                    textDecoration = if (isTodayView && item.isCompleted) TextDecoration.LineThrough else null,
+                    textDecoration = if (isTodayView && localCompleted) TextDecoration.LineThrough else null,
                 )
-                Text(
-                    text = habit.frequencyLabel() + streakText(item),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+
+                Spacer(Modifier.height(4.dp))
+
+                // Single line layout with frequency and animated streak text
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = habit.frequencyLabel(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+
+                    // Fades in smoothly while reserving space to prevent card jumping
+                    Box(
+                        modifier = Modifier.graphicsLayer {
+                            alpha = streakAlpha
+                        }
+                    ) {
+                        Text(
+                            text = streakText(item),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
             }
 
             if (isTodayView) {
-                Checkbox(
-                    checked = item.isCompleted,
-                    onCheckedChange = { onToggle() },
-                    colors = CheckboxDefaults.colors(checkedColor = habitColor),
-                )
+                Box(
+                    modifier = Modifier.graphicsLayer {
+                        scaleX = checkboxScale
+                        scaleY = checkboxScale
+                    }
+                ) {
+                    Checkbox(
+                        checked = localCompleted,
+                        onCheckedChange = { checked ->
+                            localCompleted = checked
+                            onToggle()
+                        },
+                        colors = CheckboxDefaults.colors(checkedColor = habitColor),
+                    )
+                }
             }
         }
     }
 }
+
 
 private fun streakText(item: HabitUiItem): String {
     if (item.streak <= 0) return ""

@@ -20,8 +20,6 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 
 enum class HabitTab(val title: String) {
     TODAY("Today"),
@@ -38,12 +36,20 @@ data class HabitUiItem(
 
 data class HabitUiState(
     val habits: List<HabitUiItem> = emptyList(),
+    val todayHabits: List<HabitUiItem> = emptyList(),
+    val allHabitsList: List<HabitUiItem> = emptyList(),
+    val archivedHabitsList: List<HabitUiItem> = emptyList(),
     val selectedTab: HabitTab = HabitTab.TODAY,
     val isLoading: Boolean = false,
     val message: String? = null
 ) {
+    // Keep total habits for the active tab view if needed elsewhere
     val totalCount: Int get() = habits.size
     val completedCount: Int get() = habits.count { it.isCompleted }
+
+    // Dedicated Today counts so the progress bar never jumps when switching tabs!
+    val todayTotalCount: Int get() = todayHabits.size
+    val todayCompletedCount: Int get() = todayHabits.count { it.isCompleted }
 }
 
 class HabitViewModel(
@@ -52,8 +58,8 @@ class HabitViewModel(
 ) : ViewModel() {
 
     private val currentDate = MutableStateFlow(todayKey())
-    private val message = MutableStateFlow<String?>(null)
     private val currentTab = MutableStateFlow(HabitTab.TODAY)
+    private val _message = MutableStateFlow<String?>(null)
 
     fun selectTab(tab: HabitTab) {
         currentTab.value = tab
@@ -63,45 +69,9 @@ class HabitViewModel(
         currentDate.value = todayKey()
     }
 
-  fun getFilteredHabits(): Flow<List<HabitUiItem>> {
-        return combine(
-            repository.allHabits,
-            repository.allCompletions,
-            currentDate,
-            currentTab
-        ) { habits, allCompletions, todayDateKey, tab ->
-            // 1. Get completions strictly matching today's date key
-            val todayCompletedIds = allCompletions
-                .filter { it.dateString == todayDateKey }
-                .map { it.habitId }
-                .toSet()
-
-            // 2. Filter habits based on selected tab and current date
-            val filteredHabits = when (tab) {
-                HabitTab.TODAY -> habits.filter { !it.isArchived && it.isDueOn(todayDateKey) }
-                HabitTab.ALL -> habits.filter { !it.isArchived }
-                HabitTab.ARCHIVED -> habits.filter { it.isArchived }
-            }
-
-            // 3. Map habits to UI items with accurate streaks & completion status
-            filteredHabits.map { habit ->
-                val isDone = habit.id in todayCompletedIds
-                val habitCompletionDates = allCompletions
-                    .filter { it.habitId == habit.id }
-                    .map { it.dateString }
-                val currentStreak = repository.calculateCurrentStreak(habitCompletionDates)
-
-                HabitUiItem(
-                    habit = habit,
-                    isCompleted = isDone,
-                    streak = currentStreak,
-                )
-            }
-        }
+    fun clearMessage() {
+        _message.value = null
     }
-
-    private val _message = MutableStateFlow<String?>(null)
-    private val _selectedTab = MutableStateFlow(HabitTab.TODAY)
 
     private fun triggerWidgetUpdate(context: Context?) {
         val targetContext = context ?: appContext
@@ -115,26 +85,62 @@ class HabitViewModel(
             }
         }
     }
-   
-      
 
-        val habitItems = filteredHabits.map { habit ->
-            val habitCompletions = completions.filter { it.habitId == habit.id }
-            val completedDates = habitCompletions.map { it.dateString }
-            val isCompletedToday = completedDates.contains(todayStr)
-            val streak = repository.calculateCurrentStreak(completedDates)
-            HabitUiItem(
-                habit = habit,
-                isCompleted = isCompletedToday,
-                streak = streak
-            )
+    // --- Single Reactive UI State Flow ---
+    // --- Single Reactive UI State Flow ---
+    val uiState: StateFlow<HabitUiState> = combine(
+        repository.allHabits,
+        repository.allCompletions,
+        currentDate,
+        currentTab,
+        _message
+    ) { habits, allCompletions, todayDateKey, tab, msg ->
+        val todayCompletedIds = allCompletions
+            .filter { it.dateString == todayDateKey }
+            .map { it.habitId }
+            .toSet()
+
+        // Helper mapper function
+        // Helper mapper function with optimized streak lookup
+        fun mapToUiItems(rawHabits: List<Habit>): List<HabitUiItem> {
+            // Pre-group all completions by habitId once, instead of filtering list inside a loop
+            val completionsByHabitId = allCompletions.groupBy { it.habitId }
+
+            return rawHabits.map { habit ->
+                val isDone = habit.id in todayCompletedIds
+
+                // Pull pre-grouped dates instantly
+                val habitCompletionDates = completionsByHabitId[habit.id]?.map { it.dateString } ?: emptyList()
+                val currentStreak = repository.calculateCurrentStreak(habitCompletionDates)
+
+                HabitUiItem(
+                    habit = habit,
+                    isCompleted = isDone,
+                    streak = currentStreak
+                )
+            }
+        }
+
+        // Pre-calculate all tab lists simultaneously to eliminate switching lag
+        val todayList = mapToUiItems(habits.filter { !it.isArchived && it.isDueOn(todayDateKey) })
+        val allList = mapToUiItems(habits.filter { !it.isArchived })
+        val archivedList = mapToUiItems(habits.filter { it.isArchived })
+
+        // Pick the active list instantly
+        val activeHabits = when (tab) {
+            HabitTab.TODAY -> todayList
+            HabitTab.ALL -> allList
+            HabitTab.ARCHIVED -> archivedList
         }
 
         HabitUiState(
-            habits = habitItems,
-            selectedTab = selectedTab,
+            habits = activeHabits,
+            todayHabits = todayList,
+            allHabitsList = allList,
+            archivedHabitsList = archivedList,
+            selectedTab = tab,
             isLoading = false,
-            message = message
+            message = msg
         )
     }.stateIn(
         scope = viewModelScope,
@@ -148,14 +154,6 @@ class HabitViewModel(
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = emptyList()
         )
-
-    fun selectTab(tab: HabitTab) {
-        _selectedTab.value = tab
-    }
-
-    fun clearMessage() {
-        _message.value = null
-    }
 
     // --- User Actions with Widget Refresh Triggers ---
 
@@ -197,14 +195,13 @@ class HabitViewModel(
         }
     }
 
-
     fun toggleHabit(habitId: Long) {
         viewModelScope.launch {
             try {
                 refreshDate()
                 repository.toggleHabitCompletion(habitId, currentDate.value)
             } catch (e: Exception) {
-                message.value = "Couldn't update habit"
+                _message.value = "Couldn't update habit"
             }
         }
     }
@@ -216,7 +213,7 @@ class HabitViewModel(
             triggerWidgetUpdate(context)
         }
     }
-    
+
     fun restoreHabit(habit: Habit, context: Context? = null) {
         viewModelScope.launch {
             repository.updateHabit(habit.copy(isArchived = false))
@@ -246,11 +243,13 @@ class HabitViewModel(
 
     fun toggleCompletion(habitId: Long, context: Context? = null) {
         viewModelScope.launch {
-            val todayStr = LocalDate.now().toString()
+            val todayStr = todayKey()
             repository.toggleHabitCompletion(habitId, todayStr)
             triggerWidgetUpdate(context)
         }
     }
+
+    // --- Helper Functions ---
 
     private fun Habit.isDueOn(dateString: String): Boolean = when (frequency.type) {
         FrequencyType.DAILY -> true
@@ -276,10 +275,4 @@ class HabitViewModel(
 
     private fun todayKey(): String =
         SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-
-    fun updateHabit(habit: Habit) {
-        viewModelScope.launch {
-            repository.updateHabit(habit)
-        }
-    }
 }
