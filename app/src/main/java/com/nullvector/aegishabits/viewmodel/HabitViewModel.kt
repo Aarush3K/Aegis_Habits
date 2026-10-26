@@ -1,16 +1,18 @@
 package com.nullvector.aegishabits.viewmodel
 
+import android.content.Context
+import androidx.glance.appwidget.updateAll
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nullvector.aegishabits.model.Frequency
 import com.nullvector.aegishabits.model.FrequencyType
 import com.nullvector.aegishabits.model.Habit
+import com.nullvector.aegishabits.model.HabitCompletion
 import com.nullvector.aegishabits.repository.HabitRepository
-import kotlinx.coroutines.flow.Flow
+import com.nullvector.aegishabits.ui.widget.HabitWidget
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -24,27 +26,29 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 enum class HabitTab(val title: String) {
     TODAY("Today"),
     ALL("All Habits"),
-    ARCHIVED("Archive")
+    ARCHIVED("Archived")
 }
 
+// --- UI Data Models required by HabitActivity ---
 data class HabitUiItem(
     val habit: Habit,
-    val isCompleted: Boolean,
-    val streak: Int = 0,
+    val isCompleted: Boolean = false,
+    val streak: Int = 0
 )
 
 data class HabitUiState(
-    val isLoading: Boolean = true,
-    val selectedTab: HabitTab = HabitTab.TODAY,
     val habits: List<HabitUiItem> = emptyList(),
-    val message: String? = null,
+    val selectedTab: HabitTab = HabitTab.TODAY,
+    val isLoading: Boolean = false,
+    val message: String? = null
 ) {
-    val completedCount: Int get() = habits.count { it.isCompleted }
     val totalCount: Int get() = habits.size
+    val completedCount: Int get() = habits.count { it.isCompleted }
 }
 
 class HabitViewModel(
     private val repository: HabitRepository,
+    private val appContext: Context? = null
 ) : ViewModel() {
 
     private val currentDate = MutableStateFlow(todayKey())
@@ -59,7 +63,7 @@ class HabitViewModel(
         currentDate.value = todayKey()
     }
 
-    fun getFilteredHabits(): Flow<List<HabitUiItem>> {
+  fun getFilteredHabits(): Flow<List<HabitUiItem>> {
         return combine(
             repository.allHabits,
             repository.allCompletions,
@@ -82,11 +86,9 @@ class HabitViewModel(
             // 3. Map habits to UI items with accurate streaks & completion status
             filteredHabits.map { habit ->
                 val isDone = habit.id in todayCompletedIds
-
                 val habitCompletionDates = allCompletions
                     .filter { it.habitId == habit.id }
                     .map { it.dateString }
-
                 val currentStreak = repository.calculateCurrentStreak(habitCompletionDates)
 
                 HabitUiItem(
@@ -98,60 +100,107 @@ class HabitViewModel(
         }
     }
 
-    val uiState: StateFlow<HabitUiState> =
-        combine(getFilteredHabits(), currentTab, message) { items, tab, msg ->
-            HabitUiState(
-                isLoading = false,
-                selectedTab = tab,
-                habits = items,
-                message = msg
-            )
-        }
-            .catch { emit(HabitUiState(isLoading = false, message = "Could not load habits")) }
-            .stateIn(
-                scope = viewModelScope,
-                started = SharingStarted.WhileSubscribed(5_000),
-                initialValue = HabitUiState(isLoading = true),
-            )
+    private val _message = MutableStateFlow<String?>(null)
+    private val _selectedTab = MutableStateFlow(HabitTab.TODAY)
 
-    fun addHabit(
-        title: String,
-        color: Int,
-        icon: String,
-        frequencyType: FrequencyType,
-        targetDaysPerWeek: Int = 7,
-        customDaysOfWeek: List<Int> = emptyList()
-    ) {
-        val trimmed = title.trim()
-        if (trimmed.isEmpty()) {
-            message.value = "Habit title can't be empty"
-            return
-        }
-        viewModelScope.launch {
-            try {
-                repository.insertHabit(
-                    Habit(
-                        title = trimmed,
-                        color = color,
-                        icon = icon,
-                        frequency = Frequency(
-                            type = frequencyType,
-                            targetDaysPerWeek = targetDaysPerWeek,
-                            customDaysOfWeek = customDaysOfWeek
-                        )
-                    )
-                )
-                message.value = "Habit added"
-            } catch (e: Exception) {
-                message.value = "Couldn't save habit"
+    private fun triggerWidgetUpdate(context: Context?) {
+        val targetContext = context ?: appContext
+        targetContext?.let { ctx ->
+            viewModelScope.launch {
+                try {
+                    HabitWidget().updateAll(ctx)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
             }
         }
     }
+   
+      
 
-    fun toggleCompletion(habitId: Long) {
+        val habitItems = filteredHabits.map { habit ->
+            val habitCompletions = completions.filter { it.habitId == habit.id }
+            val completedDates = habitCompletions.map { it.dateString }
+            val isCompletedToday = completedDates.contains(todayStr)
+            val streak = repository.calculateCurrentStreak(completedDates)
+            HabitUiItem(
+                habit = habit,
+                isCompleted = isCompletedToday,
+                streak = streak
+            )
+        }
+
+        HabitUiState(
+            habits = habitItems,
+            selectedTab = selectedTab,
+            isLoading = false,
+            message = message
+        )
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = HabitUiState(isLoading = true)
+    )
+
+    val habits: StateFlow<List<Habit>> = repository.allHabits
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    fun selectTab(tab: HabitTab) {
+        _selectedTab.value = tab
+    }
+
+    fun clearMessage() {
+        _message.value = null
+    }
+
+    // --- User Actions with Widget Refresh Triggers ---
+
+    fun addHabit(habit: Habit, context: Context? = null) {
+        viewModelScope.launch {
+            repository.insertHabit(habit)
+            _message.value = "Habit added"
+            triggerWidgetUpdate(context)
+        }
+    }
+
+    fun addHabit(
+        name: String,
+        color: Int,
+        icon: String,
+        frequencyType: FrequencyType,
+        targetDays: Int,
+        customDays: List<Int>,
+        context: Context? = null
+    ) {
+        val habit = Habit(
+            title = name,
+            color = color,
+            icon = icon,
+            frequency = Frequency(
+                type = frequencyType,
+                targetDaysPerWeek = targetDays,
+                customDaysOfWeek = customDays
+            )
+        )
+        addHabit(habit, context)
+    }
+
+    fun updateHabit(habit: Habit, context: Context? = null) {
+        viewModelScope.launch {
+            repository.updateHabit(habit)
+            _message.value = "Habit updated"
+            triggerWidgetUpdate(context)
+        }
+    }
+
+
+    fun toggleHabit(habitId: Long) {
         viewModelScope.launch {
             try {
-                // Ensure date is fresh before toggling
                 refreshDate()
                 repository.toggleHabitCompletion(habitId, currentDate.value)
             } catch (e: Exception) {
@@ -160,41 +209,47 @@ class HabitViewModel(
         }
     }
 
-    fun archiveHabit(habit: Habit) {
+    fun archiveHabit(habit: Habit, context: Context? = null) {
         viewModelScope.launch {
-            try {
-                repository.updateHabit(habit.copy(isArchived = true))
-                message.value = "Habit archived"
-            } catch (e: Exception) {
-                message.value = "Couldn't archive habit"
-            }
+            repository.updateHabit(habit.copy(isArchived = true))
+            _message.value = "Habit archived"
+            triggerWidgetUpdate(context)
+        }
+    }
+    
+    fun restoreHabit(habit: Habit, context: Context? = null) {
+        viewModelScope.launch {
+            repository.updateHabit(habit.copy(isArchived = false))
+            _message.value = "Habit restored"
+            triggerWidgetUpdate(context)
         }
     }
 
-    fun restoreHabit(habit: Habit) {
+    fun deleteHabit(habit: Habit, context: Context? = null) {
         viewModelScope.launch {
-            try {
-                repository.updateHabit(habit.copy(isArchived = false))
-                message.value = "Habit restored"
-            } catch (e: Exception) {
-                message.value = "Couldn't restore habit"
-            }
+            repository.deleteHabit(habit)
+            _message.value = "Habit deleted"
+            triggerWidgetUpdate(context)
         }
     }
 
-    fun deleteHabit(habit: Habit) {
+    fun toggleCompletion(completion: HabitCompletion, isCompleted: Boolean, context: Context? = null) {
         viewModelScope.launch {
-            try {
-                repository.deleteHabit(habit)
-                message.value = "Habit deleted"
-            } catch (e: Exception) {
-                message.value = "Couldn't delete habit"
+            if (isCompleted) {
+                repository.insertCompletion(completion)
+            } else {
+                repository.deleteCompletion(completion)
             }
+            triggerWidgetUpdate(context)
         }
     }
 
-    fun clearMessage() {
-        message.value = null
+    fun toggleCompletion(habitId: Long, context: Context? = null) {
+        viewModelScope.launch {
+            val todayStr = LocalDate.now().toString()
+            repository.toggleHabitCompletion(habitId, todayStr)
+            triggerWidgetUpdate(context)
+        }
     }
 
     private fun Habit.isDueOn(dateString: String): Boolean = when (frequency.type) {

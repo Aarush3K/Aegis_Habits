@@ -26,6 +26,9 @@ interface CompletionDao {
     @Query("SELECT * FROM habit_completions WHERE dateString = :dateString")
     fun getCompletionsForDate(dateString: String): Flow<List<HabitCompletion>>
 
+    @Query("SELECT * FROM habit_completions WHERE dateString = :dateString")
+    suspend fun getCompletionsListForDate(dateString: String): List<HabitCompletion>
+
     @Query("SELECT * FROM habit_completions WHERE habitId = :habitId")
     fun getCompletionsForHabit(habitId: Long): Flow<List<HabitCompletion>>
 

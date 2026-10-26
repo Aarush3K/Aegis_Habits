@@ -100,7 +100,7 @@ class FakeHabitRepository : HabitRepository(
     completionDao = mock()
 ) {
     private val _allHabits = MutableStateFlow<List<Habit>>(emptyList())
-    val allHabitsFlow: Flow<List<Habit>> = _allHabits
+    override val allHabits: Flow<List<Habit>> = _allHabits
 
     val insertedHabits = mutableListOf<Habit>()
     val updatedHabits = mutableListOf<Habit>()

@@ -97,7 +97,7 @@ class HabitActivity : ComponentActivity() {
     private val viewModel: HabitViewModel by viewModels {
         val db = AppDatabase.getDatabase(applicationContext)
         val repository = HabitRepository(db.habitDao(), db.completionDao())
-        HabitViewModelFactory(repository)
+        HabitViewModelFactory(repository, applicationContext)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

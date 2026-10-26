@@ -27,7 +27,6 @@ import androidx.glance.text.TextStyle
 import com.nullvector.aegishabits.data.AppDatabase
 import com.nullvector.aegishabits.model.FrequencyType
 import com.nullvector.aegishabits.model.Habit
-import kotlinx.coroutines.flow.firstOrNull
 import java.time.LocalDate
 
 class HabitWidget : GlanceAppWidget() {
@@ -37,13 +36,13 @@ class HabitWidget : GlanceAppWidget() {
         val todayStr = LocalDate.now().toString()
 
         val habits: List<Habit> = try {
-            db.habitDao().getAllActiveHabits().firstOrNull() ?: emptyList()
+            db.habitDao().getAllActiveHabitsList()
         } catch (e: Exception) {
             emptyList()
         }
 
         val completions = try {
-            db.completionDao().getCompletionsForDate(todayStr).firstOrNull() ?: emptyList()
+            db.completionDao().getCompletionsListForDate(todayStr)
         } catch (e: Exception) {
             emptyList()
         }
@@ -74,7 +73,13 @@ fun HabitWidgetContent(habits: List<Habit>, completedIds: Set<Long>) {
     fun isDueToday(habit: Habit): Boolean {
         return when (habit.frequency.type) {
             FrequencyType.DAILY -> true
-            FrequencyType.WEEKLY -> true
+            FrequencyType.WEEKLY -> {
+                val createdTime = if (habit.createdAt > 0L) habit.createdAt else System.currentTimeMillis()
+                val createdDayOfWeek = java.time.Instant.ofEpochMilli(createdTime)
+                    .atZone(java.time.ZoneId.systemDefault())
+                    .dayOfWeek
+                today.dayOfWeek == createdDayOfWeek
+            }
             FrequencyType.CUSTOM -> {
                 if (habit.frequency.customDaysOfWeek.isEmpty()) true
                 else todayCustomCode in habit.frequency.customDaysOfWeek
@@ -83,8 +88,6 @@ fun HabitWidgetContent(habits: List<Habit>, completedIds: Set<Long>) {
     }
 
     val dueHabits = habits.filter { isDueToday(it) }
-    val upcomingHabits = habits.filter { !isDueToday(it) }
-
     val leftToComplete = dueHabits.filter { it.id !in completedIds }
     val completedToday = dueHabits.filter { it.id in completedIds }
 
@@ -124,7 +127,7 @@ fun HabitWidgetContent(habits: List<Habit>, completedIds: Set<Long>) {
         Spacer(modifier = GlanceModifier.height(8.dp))
 
         // --- Content Sections ---
-        if (habits.isEmpty()) {
+        if (dueHabits.isEmpty()) {
             Box(
                 modifier = GlanceModifier
                     .fillMaxSize()
@@ -134,7 +137,7 @@ fun HabitWidgetContent(habits: List<Habit>, completedIds: Set<Long>) {
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "No habits added yet.",
+                    text = "🎉 All done for today!",
                     style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant, fontSize = 13.sp)
                 )
             }
@@ -142,39 +145,17 @@ fun HabitWidgetContent(habits: List<Habit>, completedIds: Set<Long>) {
             Column(modifier = GlanceModifier.fillMaxWidth()) {
                 // 1. Left to complete
                 if (leftToComplete.isNotEmpty()) {
-                    Text(
-                        text = "To Complete:",
-                        style = TextStyle(color = GlanceTheme.colors.primary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    )
-                    Spacer(modifier = GlanceModifier.height(4.dp))
-                    leftToComplete.take(2).forEach { habit ->
+                    leftToComplete.take(3).forEach { habit ->
                         HabitItemRow(symbol = "⬜", habitName = habit.title)
                         Spacer(modifier = GlanceModifier.height(4.dp))
                     }
                 }
 
-                // 2. Completed
+                // 2. Completed today
                 if (completedToday.isNotEmpty()) {
-                    Text(
-                        text = "Completed:",
-                        style = TextStyle(color = GlanceTheme.colors.outline, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    )
-                    Spacer(modifier = GlanceModifier.height(4.dp))
-                    completedToday.take(2).forEach { habit ->
+                    completedToday.take(3).forEach { habit ->
                         HabitItemRow(symbol = "✅", habitName = habit.title)
                         Spacer(modifier = GlanceModifier.height(4.dp))
-                    }
-                }
-
-                // 3. Upcoming
-                if (upcomingHabits.isNotEmpty()) {
-                    Text(
-                        text = "Upcoming / Other:",
-                        style = TextStyle(color = GlanceTheme.colors.secondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    )
-                    Spacer(modifier = GlanceModifier.height(4.dp))
-                    upcomingHabits.take(1).forEach { habit ->
-                        HabitItemRow(symbol = "⏳", habitName = habit.title)
                     }
                 }
             }

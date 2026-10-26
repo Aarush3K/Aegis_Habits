@@ -13,8 +13,10 @@ open class HabitRepository(
 
     // --- Habit Operations ---
 
-    val allHabits: Flow<List<Habit>> = habitDao.getAllHabits()
-    val allCompletions: Flow<List<HabitCompletion>> = completionDao.getAllCompletionsFlow()
+    open val allHabits: Flow<List<Habit>> = habitDao.getAllHabits()
+    open val activeHabits: Flow<List<Habit>> = habitDao.getAllActiveHabits()
+    open val archivedHabits: Flow<List<Habit>> = habitDao.getArchivedHabits()
+    open val allCompletions: Flow<List<HabitCompletion>> = completionDao.getAllCompletionsFlow()
 
     suspend fun getHabitById(id: Long): Habit? {
         return habitDao.getHabitById(id)
