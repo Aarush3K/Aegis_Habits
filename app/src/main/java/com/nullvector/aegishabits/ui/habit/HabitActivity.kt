@@ -6,6 +6,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,13 +18,19 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -47,20 +54,28 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.nullvector.aegishabits.model.Frequency
+import com.nullvector.aegishabits.data.AppDatabase
 import com.nullvector.aegishabits.model.FrequencyType
+import com.nullvector.aegishabits.repository.HabitRepository
 import com.nullvector.aegishabits.ui.theme.AegisHabitsTheme
+import com.nullvector.aegishabits.viewmodel.HabitUiItem
+import com.nullvector.aegishabits.viewmodel.HabitUiState
+import com.nullvector.aegishabits.viewmodel.HabitViewModel
+import com.nullvector.aegishabits.viewmodel.HabitViewModelFactory
 
 class HabitActivity : ComponentActivity() {
 
     private val viewModel: HabitViewModel by viewModels {
-        HabitViewModelFactory(application)
+        val db = AppDatabase.getDatabase(applicationContext)
+        val repository = HabitRepository(db.habitDao(), db.completionDao())
+        HabitViewModelFactory(repository)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -74,11 +89,26 @@ class HabitActivity : ComponentActivity() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Options offered in the "add habit" form
+// ---------------------------------------------------------------------------
+
+private val habitColors: List<Int> = listOf(
+    0xFF3B6FE0.toInt(), 0xFF6FD3F5.toInt(), 0xFF8E7CF3.toInt(), 0xFF4CC38A.toInt(),
+    0xFFF5B83D.toInt(), 0xFFF2766B.toInt(), 0xFFE86FB0.toInt(),
+)
+
+private val habitIcons = listOf("💪", "📚", "💧", "🏃", "🧘", "😴", "🍎", "✍️", "🎯", "💻")
+
 private fun FrequencyType.label(): String = when (this) {
     FrequencyType.DAILY -> "Daily"
     FrequencyType.WEEKLY -> "Weekly"
     FrequencyType.CUSTOM -> "Custom"
 }
+
+// ---------------------------------------------------------------------------
+// Main dashboard
+// ---------------------------------------------------------------------------
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -99,7 +129,7 @@ fun HabitScreen(viewModel: HabitViewModel) {
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
             FloatingActionButton(onClick = { showAddDialog = true }) {
-                Text("+", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                Text("+", fontSize = 24.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
             }
         },
     ) { padding ->
@@ -126,12 +156,8 @@ fun HabitScreen(viewModel: HabitViewModel) {
     if (showAddDialog) {
         AddHabitDialog(
             onDismiss = { showAddDialog = false },
-            onConfirm = { name, description, frequencyType ->
-                viewModel.addHabit(
-                    title = name,
-                    description = description,
-                    frequency = Frequency(type = frequencyType)
-                )
+            onConfirm = { name, color, icon, frequencyType ->
+                viewModel.addHabit(name, color, icon, frequencyType)
                 showAddDialog = false
             },
         )
@@ -149,8 +175,7 @@ private fun HabitList(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         item { ProgressHeader(done = state.completedCount, total = state.totalCount) }
-        items(state.habits.size, key = { state.habits[it].habit.id }) { index ->
-            val item = state.habits[index]
+        items(state.habits, key = { it.habit.id }) { item ->
             HabitRow(item = item, onToggle = { onToggle(item.habit.id) })
         }
     }
@@ -178,6 +203,7 @@ private fun ProgressHeader(done: Int, total: Int) {
 @Composable
 private fun HabitRow(item: HabitUiItem, onToggle: () -> Unit) {
     val habit = item.habit
+    val habitColor = Color(habit.color)
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -187,6 +213,15 @@ private fun HabitRow(item: HabitUiItem, onToggle: () -> Unit) {
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(habitColor.copy(alpha = 0.25f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(habit.icon, fontSize = 22.sp)
+            }
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(
@@ -195,7 +230,7 @@ private fun HabitRow(item: HabitUiItem, onToggle: () -> Unit) {
                     textDecoration = if (item.isCompleted) TextDecoration.LineThrough else null,
                 )
                 Text(
-                    text = habit.frequency.type.label(),
+                    text = habit.frequency.type.label() + streakText(item),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -203,9 +238,17 @@ private fun HabitRow(item: HabitUiItem, onToggle: () -> Unit) {
             Checkbox(
                 checked = item.isCompleted,
                 onCheckedChange = { onToggle() },
+                colors = CheckboxDefaults.colors(checkedColor = habitColor),
             )
         }
     }
+}
+
+private fun streakText(item: HabitUiItem): String {
+    if (item.streak <= 0) return ""
+    val unit = if (item.habit.frequency.type == FrequencyType.WEEKLY) "week" else "day"
+    val plural = if (item.streak == 1) "" else "s"
+    return "  ·  🔥 ${item.streak} $unit$plural streak"
 }
 
 @Composable
@@ -230,13 +273,18 @@ private fun EmptyState(modifier: Modifier = Modifier) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// "Add habit" form
+// ---------------------------------------------------------------------------
+
 @Composable
 private fun AddHabitDialog(
     onDismiss: () -> Unit,
-    onConfirm: (name: String, description: String, frequencyType: FrequencyType) -> Unit,
+    onConfirm: (name: String, color: Int, icon: String, frequencyType: FrequencyType) -> Unit,
 ) {
     var name by rememberSaveable { mutableStateOf("") }
-    var description by rememberSaveable { mutableStateOf("") }
+    var color by rememberSaveable { mutableStateOf(habitColors.first()) }
+    var icon by rememberSaveable { mutableStateOf(habitIcons.first()) }
     var frequencyType by rememberSaveable { mutableStateOf(FrequencyType.DAILY) }
 
     AlertDialog(
@@ -244,20 +292,13 @@ private fun AddHabitDialog(
         title = { Text("New habit") },
         text = {
             Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it.take(40) },
                     label = { Text("Habit name") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-
-                OutlinedTextField(
-                    value = description,
-                    onValueChange = { description = it.take(100) },
-                    label = { Text("Description (optional)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -272,11 +313,50 @@ private fun AddHabitDialog(
                         )
                     }
                 }
+
+                Text("Colour", style = MaterialTheme.typography.labelLarge)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(habitColors) { c ->
+                        val selected = c == color
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(Color(c))
+                                .then(
+                                    if (selected) Modifier.border(
+                                        3.dp, MaterialTheme.colorScheme.onSurface, CircleShape
+                                    ) else Modifier
+                                )
+                                .clickable { color = c }
+                        )
+                    }
+                }
+
+                Text("Icon", style = MaterialTheme.typography.labelLarge)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(habitIcons) { i ->
+                        val selected = i == icon
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(
+                                    if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+                                    else MaterialTheme.colorScheme.surfaceVariant
+                                )
+                                .clickable { icon = i },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(i, fontSize = 22.sp)
+                        }
+                    }
+                }
             }
         },
         confirmButton = {
             TextButton(
-                onClick = { onConfirm(name, description, frequencyType) },
+                onClick = { onConfirm(name, color, icon, frequencyType) },
                 enabled = name.isNotBlank(),
             ) { Text("Add") }
         },

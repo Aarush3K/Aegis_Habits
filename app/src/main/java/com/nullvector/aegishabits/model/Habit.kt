@@ -10,7 +10,9 @@ data class Habit(
     val title: String,
     val description: String = "",
     val frequency: Frequency = Frequency(),
-    val reminderTime: String? = null, // e.g., "08:00"
+    val reminderTime: String? = null,
     val isArchived: Boolean = false,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val color: Int = 0xFF3B6FE0.toInt(),
+    val icon: String = "💪"
 )
