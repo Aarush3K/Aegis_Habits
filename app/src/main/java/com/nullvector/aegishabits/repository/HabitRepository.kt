@@ -13,7 +13,7 @@ open class HabitRepository(
 
     // --- Habit Operations ---
 
-    val allHabits: Flow<List<Habit>> = habitDao.getAllActiveHabits()
+    val allHabits: Flow<List<Habit>> = habitDao.getAllHabits()
     val allCompletions: Flow<List<HabitCompletion>> = completionDao.getAllCompletionsFlow()
 
     suspend fun getHabitById(id: Long): Habit? {

@@ -9,6 +9,9 @@ interface HabitDao {
 
     // --- Habit Operations ---
 
+    // ✅ Added this to fetch ALL habits (active + archived) for ViewModel filtering
+    @Query("SELECT * FROM habits ORDER BY createdAt DESC")
+    fun getAllHabits(): Flow<List<Habit>>
 
     @Query("SELECT * FROM habits WHERE isArchived = 0 ORDER BY createdAt DESC")
     fun getAllActiveHabits(): Flow<List<Habit>>
@@ -25,4 +28,9 @@ interface HabitDao {
     @Delete
     suspend fun deleteHabit(habit: Habit)
 
+    @Query("SELECT * FROM habits WHERE isArchived = 0")
+    fun getActiveHabits(): Flow<List<Habit>>
+
+    @Query("SELECT * FROM habits WHERE isArchived = 1")
+    fun getArchivedHabits(): Flow<List<Habit>>
 }
