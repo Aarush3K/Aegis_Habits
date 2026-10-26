@@ -82,4 +82,6 @@ dependencies {
     testImplementation("org.mockito:mockito-core:5.11.0")
     testImplementation("org.mockito.kotlin:mockito-kotlin:5.2.1")
     testImplementation("org.mockito:mockito-subclass:5.11.0")
+
+    implementation("androidx.compose.material:material-icons-extended:1.6.8")
 }

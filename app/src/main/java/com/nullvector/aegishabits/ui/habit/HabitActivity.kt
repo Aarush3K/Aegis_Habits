@@ -25,22 +25,29 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Today
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -55,12 +62,14 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
@@ -77,6 +86,7 @@ import com.nullvector.aegishabits.viewmodel.HabitUiItem
 import com.nullvector.aegishabits.viewmodel.HabitUiState
 import com.nullvector.aegishabits.viewmodel.HabitViewModel
 import com.nullvector.aegishabits.viewmodel.HabitViewModelFactory
+import kotlinx.coroutines.launch
 
 class HabitActivity : ComponentActivity() {
 
@@ -147,8 +157,28 @@ fun HabitScreen(viewModel: HabitViewModel) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var showAddDialog by rememberSaveable { mutableStateOf(false) }
     var selectedHabitForAction by remember { mutableStateOf<HabitUiItem?>(null) }
-    var showMenuDropdown by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
+    val coroutineScope = rememberCoroutineScope()
+
+    val pagerState = rememberPagerState(
+        initialPage = state.selectedTab.ordinal,
+        pageCount = { HabitTab.entries.size }
+    )
+
+    // Sync Pager state when ViewModel tab changes externally
+    LaunchedEffect(state.selectedTab) {
+        if (pagerState.currentPage != state.selectedTab.ordinal) {
+            pagerState.animateScrollToPage(state.selectedTab.ordinal)
+        }
+    }
+
+    // Sync ViewModel tab when user swipes the pager
+    LaunchedEffect(pagerState.currentPage) {
+        val targetTab = HabitTab.entries[pagerState.currentPage]
+        if (targetTab != state.selectedTab) {
+            viewModel.selectTab(targetTab)
+        }
+    }
 
     LaunchedEffect(state.message) {
         state.message?.let {
@@ -161,63 +191,71 @@ fun HabitScreen(viewModel: HabitViewModel) {
         topBar = {
             TopAppBar(
                 title = {
-                    Box {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { showMenuDropdown = true }
-                                .padding(vertical = 4.dp, horizontal = 8.dp)
-                        ) {
-                            Text(
-                                text = "${state.selectedTab.title} ▾",
-                                fontWeight = FontWeight.Bold,
-                                style = MaterialTheme.typography.titleLarge
-                            )
-                        }
-
-                        DropdownMenu(
-                            expanded = showMenuDropdown,
-                            onDismissRequest = { showMenuDropdown = false }
-                        ) {
-                            HabitTab.entries.forEach { tab ->
-                                DropdownMenuItem(
-                                    text = { Text(tab.title) },
-                                    onClick = {
-                                        viewModel.selectTab(tab)
-                                        showMenuDropdown = false
-                                    }
-                                )
-                            }
-                        }
-                    }
+                    Text(
+                        text = state.selectedTab.title,
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleLarge
+                    )
                 }
             )
         },
+        bottomBar = {
+            // Material3 NavigationBar using proper icons instead of text labels
+            NavigationBar {
+                HabitTab.entries.forEach { tab ->
+                    val isSelected = tab == state.selectedTab
+                    val icon: ImageVector = when (tab) {
+                        HabitTab.TODAY -> Icons.Default.Today
+                        HabitTab.ALL -> Icons.Default.List
+                        HabitTab.ARCHIVED -> Icons.Default.Archive
+                    }
+
+                    NavigationBarItem(
+                        selected = isSelected,
+                        onClick = {
+                            coroutineScope.launch {
+                                pagerState.animateScrollToPage(tab.ordinal)
+                            }
+                        },
+                        icon = {
+                            Icon(imageVector = icon, contentDescription = tab.title)
+                        }
+                    )
+                }
+            }
+        },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
-            FloatingActionButton(onClick = { showAddDialog = true }) {
+            FloatingActionButton(
+                onClick = { showAddDialog = true },
+                modifier = Modifier.padding(bottom = 8.dp)
+            ) {
                 Text("+", fontSize = 24.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
             }
         },
     ) { padding ->
-        Box(
+        HorizontalPager(
+            state = pagerState,
             modifier = Modifier
                 .padding(padding)
                 .fillMaxSize()
-        ) {
-            when {
-                state.isLoading ->
-                    CircularProgressIndicator(Modifier.align(Alignment.Center))
+        ) { page ->
+            val pageTab = HabitTab.entries[page]
 
-                state.habits.isEmpty() ->
-                    EmptyState(tab = state.selectedTab, modifier = Modifier.align(Alignment.Center))
+            Box(modifier = Modifier.fillMaxSize()) {
+                when {
+                    state.isLoading ->
+                        CircularProgressIndicator(Modifier.align(Alignment.Center))
 
-                else -> HabitList(
-                    state = state,
-                    onToggle = { habitId -> viewModel.toggleCompletion(habitId) },
-                    onItemLongClick = { habitItem -> selectedHabitForAction = habitItem }
-                )
+                    state.habits.isEmpty() ->
+                        EmptyState(tab = pageTab, modifier = Modifier.align(Alignment.Center))
+
+                    else -> HabitList(
+                        state = state,
+                        onToggle = { habitId -> viewModel.toggleCompletion(habitId) },
+                        onItemLongClick = { habitItem -> selectedHabitForAction = habitItem }
+                    )
+                }
             }
         }
     }
