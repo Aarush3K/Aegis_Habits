@@ -141,14 +141,33 @@ private fun Habit.frequencyLabel(): String {
 // Main dashboard
 // ---------------------------------------------------------------------------
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun HabitScreen(viewModel: HabitViewModel) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var showAddDialog by rememberSaveable { mutableStateOf(false) }
     var selectedHabitForAction by remember { mutableStateOf<HabitUiItem?>(null) }
-    var showMenuDropdown by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
+
+    val pagerState = androidx.compose.foundation.pager.rememberPagerState(
+        initialPage = state.selectedTab.ordinal,
+        pageCount = { HabitTab.entries.size }
+    )
+
+    // Sync Pager state when ViewModel tab changes externally
+    LaunchedEffect(state.selectedTab) {
+        if (pagerState.currentPage != state.selectedTab.ordinal) {
+            pagerState.animateScrollToPage(state.selectedTab.ordinal)
+        }
+    }
+
+    // Sync ViewModel tab when user swipes the pager
+    LaunchedEffect(pagerState.currentPage) {
+        val targetTab = HabitTab.entries[pagerState.currentPage]
+        if (targetTab != state.selectedTab) {
+            viewModel.selectTab(targetTab)
+        }
+    }
 
     LaunchedEffect(state.message) {
         state.message?.let {
@@ -161,35 +180,19 @@ fun HabitScreen(viewModel: HabitViewModel) {
         topBar = {
             TopAppBar(
                 title = {
-                    Box {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { showMenuDropdown = true }
-                                .padding(vertical = 4.dp, horizontal = 8.dp)
-                        ) {
-                            Text(
-                                text = "${state.selectedTab.title} ▾",
-                                fontWeight = FontWeight.Bold,
-                                style = MaterialTheme.typography.titleLarge
-                            )
-                        }
-
-                        DropdownMenu(
-                            expanded = showMenuDropdown,
-                            onDismissRequest = { showMenuDropdown = false }
-                        ) {
-                            HabitTab.entries.forEach { tab ->
-                                DropdownMenuItem(
-                                    text = { Text(tab.title) },
-                                    onClick = {
-                                        viewModel.selectTab(tab)
-                                        showMenuDropdown = false
-                                    }
-                                )
-                            }
-                        }
+                    // Show current tab title with a subtle swipe indicator hint
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = state.selectedTab.title,
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleLarge
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "‹ swipe ›",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                        )
                     }
                 }
             )
@@ -201,23 +204,29 @@ fun HabitScreen(viewModel: HabitViewModel) {
             }
         },
     ) { padding ->
-        Box(
+        // Horizontal Pager allowing swipe gestures between views
+        androidx.compose.foundation.pager.HorizontalPager(
+            state = pagerState,
             modifier = Modifier
                 .padding(padding)
                 .fillMaxSize()
-        ) {
-            when {
-                state.isLoading ->
-                    CircularProgressIndicator(Modifier.align(Alignment.Center))
+        ) { page ->
+            val pageTab = HabitTab.entries[page]
 
-                state.habits.isEmpty() ->
-                    EmptyState(tab = state.selectedTab, modifier = Modifier.align(Alignment.Center))
+            Box(modifier = Modifier.fillMaxSize()) {
+                when {
+                    state.isLoading ->
+                        CircularProgressIndicator(Modifier.align(Alignment.Center))
 
-                else -> HabitList(
-                    state = state,
-                    onToggle = { habitId -> viewModel.toggleCompletion(habitId) },
-                    onItemLongClick = { habitItem -> selectedHabitForAction = habitItem }
-                )
+                    state.habits.isEmpty() ->
+                        EmptyState(tab = pageTab, modifier = Modifier.align(Alignment.Center))
+
+                    else -> HabitList(
+                        state = state,
+                        onToggle = { habitId -> viewModel.toggleCompletion(habitId) },
+                        onItemLongClick = { habitItem -> selectedHabitForAction = habitItem }
+                    )
+                }
             }
         }
     }
@@ -251,7 +260,6 @@ fun HabitScreen(viewModel: HabitViewModel) {
         )
     }
 }
-
 @Composable
 private fun HabitList(
     state: HabitUiState,
