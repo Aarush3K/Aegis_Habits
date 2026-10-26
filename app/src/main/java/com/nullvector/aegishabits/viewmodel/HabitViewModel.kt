@@ -109,8 +109,14 @@ class HabitViewModel(
         message.value = null
     }
 
-    private fun Habit.isDueToday(): Boolean = true
-
+    private fun Habit.isDueToday(): Boolean = when (frequency.type) {
+        FrequencyType.DAILY, FrequencyType.CUSTOM -> true
+        FrequencyType.WEEKLY -> {
+            // Fallback to current time if createdAt was not set properly (0L)
+            val createdTime = if (createdAt > 0L) createdAt else System.currentTimeMillis()
+            weekdayOf(createdTime) == weekdayOf(System.currentTimeMillis())
+        }
+    }
     private fun weekdayOf(millis: Long): Int =
         Calendar.getInstance().apply { timeInMillis = millis }.get(Calendar.DAY_OF_WEEK)
 
