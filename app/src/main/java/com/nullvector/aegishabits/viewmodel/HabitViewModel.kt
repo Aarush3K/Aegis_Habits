@@ -10,8 +10,8 @@ import com.nullvector.aegishabits.model.Habit
 import com.nullvector.aegishabits.model.HabitCompletion
 import com.nullvector.aegishabits.repository.HabitRepository
 import com.nullvector.aegishabits.ui.widget.HabitWidget
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
@@ -63,14 +63,14 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
         )
     }.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
+        started = kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5000),
         initialValue = HabitUiState(isLoading = true)
     )
 
     val habits: StateFlow<List<Habit>> = repository.allHabits
         .stateIn(
             scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
+            started = kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5000),
             initialValue = emptyList()
         )
 
@@ -83,7 +83,10 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
         viewModelScope.launch {
             repository.insertHabit(habit)
             _message.value = "Habit added"
-            context?.let { HabitWidget().updateAll(it) }
+            context?.applicationContext?.let { ctx ->
+                delay(100)
+                HabitWidget().updateAll(ctx)
+            }
         }
     }
 
@@ -113,7 +116,10 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
         viewModelScope.launch {
             repository.updateHabit(habit)
             _message.value = "Habit updated"
-            context?.let { HabitWidget().updateAll(it) }
+            context?.applicationContext?.let { ctx ->
+                delay(100)
+                HabitWidget().updateAll(ctx)
+            }
         }
     }
 
@@ -121,7 +127,10 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
         viewModelScope.launch {
             repository.deleteHabit(habit)
             _message.value = "Habit deleted"
-            context?.let { HabitWidget().updateAll(it) }
+            context?.applicationContext?.let { ctx ->
+                delay(100)
+                HabitWidget().updateAll(ctx)
+            }
         }
     }
 
@@ -132,7 +141,10 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
             } else {
                 repository.deleteCompletion(completion)
             }
-            context?.let { HabitWidget().updateAll(it) }
+            context?.applicationContext?.let { ctx ->
+                delay(100)
+                HabitWidget().updateAll(ctx)
+            }
         }
     }
 
@@ -140,7 +152,10 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
         viewModelScope.launch {
             val todayStr = LocalDate.now().toString()
             repository.toggleHabitCompletion(habitId, todayStr)
-            context?.let { HabitWidget().updateAll(it) }
+            context?.applicationContext?.let { ctx ->
+                delay(100)
+                HabitWidget().updateAll(ctx)
+            }
         }
     }
 }
