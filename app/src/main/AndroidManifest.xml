@@ -12,7 +12,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.AegisHabits">
         <receiver
-            android:name=".ui.widget.WidgetActionReceiver"
+            android:name=".ui.widget.HabitWidgetReceiver"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
@@ -21,18 +21,25 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/habit_widget_info" />
         </receiver>
+
+        <!-- HabitActivity set as the main launcher -->
         <activity
-            android:name=".MainActivity"
+            android:name=".ui.habit.HabitActivity"
             android:exported="true"
             android:label="@string/app_name"
             android:theme="@style/Theme.AegisHabits"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="false"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.AegisHabits" />
     </application>
 
 </manifest>
