@@ -56,6 +56,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
@@ -138,6 +139,7 @@ private fun Habit.frequencyLabel(): String {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HabitScreen(viewModel: HabitViewModel) {
+    val context = LocalContext.current
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var showAddDialog by rememberSaveable { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
@@ -172,7 +174,7 @@ fun HabitScreen(viewModel: HabitViewModel) {
 
                 else -> HabitList(
                     state = state,
-                    onToggle = viewModel::toggleCompletion,
+                    onToggle = { habitId -> viewModel.toggleCompletion(habitId, context) },
                 )
             }
         }
@@ -182,7 +184,7 @@ fun HabitScreen(viewModel: HabitViewModel) {
         AddHabitDialog(
             onDismiss = { showAddDialog = false },
             onConfirm = { name, color, icon, frequencyType, targetDays, customDays ->
-                viewModel.addHabit(name, color, icon, frequencyType, targetDays, customDays)
+                viewModel.addHabit(name, color, icon, frequencyType, targetDays, customDays, context)
                 showAddDialog = false
             },
         )
