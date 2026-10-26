@@ -74,7 +74,8 @@ fun HabitWidgetContent(habits: List<Habit>, completedIds: Set<Long>) {
         return when (habit.frequency.type) {
             FrequencyType.DAILY -> true
             FrequencyType.WEEKLY -> {
-                val createdDayOfWeek = java.time.Instant.ofEpochMilli(habit.createdAt)
+                val createdTime = if (habit.createdAt > 0L) habit.createdAt else System.currentTimeMillis()
+                val createdDayOfWeek = java.time.Instant.ofEpochMilli(createdTime)
                     .atZone(java.time.ZoneId.systemDefault())
                     .dayOfWeek
                 today.dayOfWeek == createdDayOfWeek
