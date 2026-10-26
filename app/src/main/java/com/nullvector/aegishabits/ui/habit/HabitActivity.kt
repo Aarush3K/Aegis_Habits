@@ -47,6 +47,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -307,7 +308,7 @@ private fun AddHabitDialog(
     onConfirm: (name: String, color: Int, icon: String, frequencyType: FrequencyType, targetDays: Int, customDays: List<Int>) -> Unit,
 ) {
     var name by rememberSaveable { mutableStateOf("") }
-    var color by rememberSaveable { mutableStateOf(habitColors.first()) }
+    var color by rememberSaveable { mutableIntStateOf(habitColors.first()) }
     var icon by rememberSaveable { mutableStateOf(habitIcons.first()) }
     var frequencyType by rememberSaveable { mutableStateOf(FrequencyType.DAILY) }
 
