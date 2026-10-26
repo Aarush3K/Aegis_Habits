@@ -73,7 +73,14 @@ class HabitViewModel(
                 initialValue = HabitUiState(isLoading = true),
             )
 
-    fun addHabit(title: String, color: Int, icon: String, frequencyType: FrequencyType) {
+    fun addHabit(
+        title: String,
+        color: Int,
+        icon: String,
+        frequencyType: FrequencyType,
+        targetDaysPerWeek: Int = 7,
+        customDaysOfWeek: List<Int> = emptyList()
+    ) {
         val trimmed = title.trim()
         if (trimmed.isEmpty()) {
             message.value = "Habit title can't be empty"
@@ -86,7 +93,11 @@ class HabitViewModel(
                         title = trimmed,
                         color = color,
                         icon = icon,
-                        frequency = Frequency(type = frequencyType)
+                        frequency = Frequency(
+                            type = frequencyType,
+                            targetDaysPerWeek = targetDaysPerWeek,
+                            customDaysOfWeek = customDaysOfWeek
+                        )
                     )
                 )
             } catch (e: Exception) {
@@ -110,11 +121,21 @@ class HabitViewModel(
     }
 
     private fun Habit.isDueToday(): Boolean = when (frequency.type) {
-        FrequencyType.DAILY, FrequencyType.CUSTOM -> true
+        FrequencyType.DAILY -> true
         FrequencyType.WEEKLY -> {
-            // Fallback to current time if createdAt was not set properly (0L)
             val createdTime = if (createdAt > 0L) createdAt else System.currentTimeMillis()
             weekdayOf(createdTime) == weekdayOf(System.currentTimeMillis())
+        }
+        FrequencyType.CUSTOM -> {
+            // If specific days of the week are selected (e.g. Mon, Wed, Fri), check if today matches
+            if (frequency.customDaysOfWeek.isNotEmpty()) {
+                val todayCalendarDay = Calendar.getInstance().get(Calendar.DAY_OF_WEEK)
+                // Note: Calendar.DAY_OF_WEEK uses 1=Sunday, 2=Monday...7=Saturday.
+                // Adjust mapping if your app treats 1=Monday. Assuming standard calendar indexing:
+                todayCalendarDay in frequency.customDaysOfWeek
+            } else {
+                true // Fallback if no custom days are explicitly toggled
+            }
         }
     }
     private fun weekdayOf(millis: Long): Int =

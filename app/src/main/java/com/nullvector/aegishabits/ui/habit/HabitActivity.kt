@@ -156,8 +156,8 @@ fun HabitScreen(viewModel: HabitViewModel) {
     if (showAddDialog) {
         AddHabitDialog(
             onDismiss = { showAddDialog = false },
-            onConfirm = { name, color, icon, frequencyType ->
-                viewModel.addHabit(name, color, icon, frequencyType)
+            onConfirm = { name, color, icon, frequencyType, targetDays, customDays ->
+                viewModel.addHabit(name, color, icon, frequencyType, targetDays, customDays)
                 showAddDialog = false
             },
         )
@@ -280,12 +280,18 @@ private fun EmptyState(modifier: Modifier = Modifier) {
 @Composable
 private fun AddHabitDialog(
     onDismiss: () -> Unit,
-    onConfirm: (name: String, color: Int, icon: String, frequencyType: FrequencyType) -> Unit,
+    onConfirm: (name: String, color: Int, icon: String, frequencyType: FrequencyType, targetDays: Int, customDays: List<Int>) -> Unit,
 ) {
     var name by rememberSaveable { mutableStateOf("") }
     var color by rememberSaveable { mutableStateOf(habitColors.first()) }
     var icon by rememberSaveable { mutableStateOf(habitIcons.first()) }
     var frequencyType by rememberSaveable { mutableStateOf(FrequencyType.DAILY) }
+
+    // Calendar mapping: 2 = Mon, 3 = Tue, 4 = Wed, 5 = Thu, 6 = Fri, 7 = Sat, 1 = Sun
+    val daysMapping = listOf(
+        "M" to 2, "T" to 3, "W" to 4, "T" to 5, "F" to 6, "S" to 7, "S" to 1
+    )
+    var selectedDays by rememberSaveable { mutableStateOf(listOf(2, 4, 6)) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -311,6 +317,32 @@ private fun AddHabitDialog(
                             onClick = { frequencyType = f },
                             label = { Text(f.label()) },
                         )
+                    }
+                }
+
+                if (frequencyType == FrequencyType.CUSTOM) {
+                    Column {
+                        Text("Repeat on days", style = MaterialTheme.typography.labelLarge)
+                        Spacer(Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            daysMapping.forEach { (label, dayCode) ->
+                                val isSelected = dayCode in selectedDays
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = {
+                                        selectedDays = if (isSelected) {
+                                            selectedDays - dayCode
+                                        } else {
+                                            selectedDays + dayCode
+                                        }
+                                    },
+                                    label = { Text(label) }
+                                )
+                            }
+                        }
                     }
                 }
 
@@ -356,7 +388,11 @@ private fun AddHabitDialog(
         },
         confirmButton = {
             TextButton(
-                onClick = { onConfirm(name, color, icon, frequencyType) },
+                onClick = {
+                    val targetDays = if (frequencyType == FrequencyType.CUSTOM) selectedDays.size else 7
+                    val customDays = if (frequencyType == FrequencyType.CUSTOM) selectedDays else emptyList()
+                    onConfirm(name, color, icon, frequencyType, targetDays, customDays)
+                },
                 enabled = name.isNotBlank(),
             ) { Text("Add") }
         },
