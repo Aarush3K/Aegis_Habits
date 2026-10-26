@@ -87,6 +87,10 @@ import com.nullvector.aegishabits.viewmodel.HabitUiState
 import com.nullvector.aegishabits.viewmodel.HabitViewModel
 import com.nullvector.aegishabits.viewmodel.HabitViewModelFactory
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 
 class HabitActivity : ComponentActivity() {
 
@@ -160,6 +164,24 @@ fun HabitScreen(viewModel: HabitViewModel) {
     var habitToEdit by remember { mutableStateOf<HabitUiItem?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
+
+    // Inside HabitScreen:
+    LaunchedEffect(Unit) {
+        viewModel.refreshDate()
+    }
+
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                viewModel.refreshDate() // Triggers date refresh whenever app comes to foreground
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     val pagerState = rememberPagerState(
         initialPage = state.selectedTab.ordinal,

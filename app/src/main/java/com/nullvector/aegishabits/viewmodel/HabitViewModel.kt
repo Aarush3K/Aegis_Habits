@@ -18,6 +18,8 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 
 enum class HabitTab(val title: String) {
     TODAY("Today"),
@@ -45,7 +47,7 @@ class HabitViewModel(
     private val repository: HabitRepository,
 ) : ViewModel() {
 
-    private val dateKey: String = todayKey()
+    private val currentDate = MutableStateFlow(todayKey())
     private val message = MutableStateFlow<String?>(null)
     private val currentTab = MutableStateFlow(HabitTab.TODAY)
 
@@ -53,31 +55,33 @@ class HabitViewModel(
         currentTab.value = tab
     }
 
+    fun refreshDate() {
+        currentDate.value = todayKey()
+    }
+
     fun getFilteredHabits(): Flow<List<HabitUiItem>> {
-        val firstTwoFlows = combine(
-            repository.allHabits,
-            repository.getCompletionsForDate(dateKey)
-        ) { habits, todayCompletions ->
-            habits to todayCompletions
-        }
-
         return combine(
-            firstTwoFlows,
+            repository.allHabits,
             repository.allCompletions,
+            currentDate,
             currentTab
-        ) { pair, allCompletions, tab ->
-            val habits = pair.first
-            val todayCompletions = pair.second
-            val completedHabitIds = todayCompletions.map { it.habitId }.toSet()
+        ) { habits, allCompletions, todayDateKey, tab ->
+            // 1. Get completions strictly matching today's date key
+            val todayCompletedIds = allCompletions
+                .filter { it.dateString == todayDateKey }
+                .map { it.habitId }
+                .toSet()
 
+            // 2. Filter habits based on selected tab and current date
             val filteredHabits = when (tab) {
-                HabitTab.TODAY -> habits.filter { !it.isArchived && it.isDueToday() }
+                HabitTab.TODAY -> habits.filter { !it.isArchived && it.isDueOn(todayDateKey) }
                 HabitTab.ALL -> habits.filter { !it.isArchived }
                 HabitTab.ARCHIVED -> habits.filter { it.isArchived }
             }
 
+            // 3. Map habits to UI items with accurate streaks & completion status
             filteredHabits.map { habit ->
-                val isDone = habit.id in completedHabitIds
+                val isDone = habit.id in todayCompletedIds
 
                 val habitCompletionDates = allCompletions
                     .filter { it.habitId == habit.id }
@@ -147,7 +151,9 @@ class HabitViewModel(
     fun toggleCompletion(habitId: Long) {
         viewModelScope.launch {
             try {
-                repository.toggleHabitCompletion(habitId, dateKey)
+                // Ensure date is fresh before toggling
+                refreshDate()
+                repository.toggleHabitCompletion(habitId, currentDate.value)
             } catch (e: Exception) {
                 message.value = "Couldn't update habit"
             }
@@ -191,24 +197,27 @@ class HabitViewModel(
         message.value = null
     }
 
-    private fun Habit.isDueToday(): Boolean = when (frequency.type) {
+    private fun Habit.isDueOn(dateString: String): Boolean = when (frequency.type) {
         FrequencyType.DAILY -> true
         FrequencyType.WEEKLY -> {
             val createdTime = if (createdAt > 0L) createdAt else System.currentTimeMillis()
-            weekdayOf(createdTime) == weekdayOf(System.currentTimeMillis())
+            val createdDateKey = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(createdTime))
+            weekdayOf(createdDateKey) == weekdayOf(dateString)
         }
         FrequencyType.CUSTOM -> {
             if (frequency.customDaysOfWeek.isNotEmpty()) {
-                val todayCalendarDay = Calendar.getInstance().get(Calendar.DAY_OF_WEEK)
-                todayCalendarDay in frequency.customDaysOfWeek
+                weekdayOf(dateString) in frequency.customDaysOfWeek
             } else {
                 true
             }
         }
     }
 
-    private fun weekdayOf(millis: Long): Int =
-        Calendar.getInstance().apply { timeInMillis = millis }.get(Calendar.DAY_OF_WEEK)
+    private fun weekdayOf(dateString: String): Int {
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        val date = sdf.parse(dateString) ?: Date()
+        return Calendar.getInstance().apply { time = date }.get(Calendar.DAY_OF_WEEK)
+    }
 
     private fun todayKey(): String =
         SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
