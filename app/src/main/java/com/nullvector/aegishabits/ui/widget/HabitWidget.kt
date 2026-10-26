@@ -25,38 +25,75 @@ import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import com.nullvector.aegishabits.data.AppDatabase
+import com.nullvector.aegishabits.model.FrequencyType
 import com.nullvector.aegishabits.model.Habit
 import kotlinx.coroutines.flow.firstOrNull
+import java.time.LocalDate
 
 class HabitWidget : GlanceAppWidget() {
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val db = AppDatabase.getDatabase(context)
+        val todayStr = LocalDate.now().toString()
 
-        // Grab habit list snapshot safely
         val habits: List<Habit> = try {
             db.habitDao().getAllActiveHabits().firstOrNull() ?: emptyList()
         } catch (e: Exception) {
             emptyList()
         }
 
+        val completions = try {
+            db.completionDao().getCompletionsForDate(todayStr).firstOrNull() ?: emptyList()
+        } catch (e: Exception) {
+            emptyList()
+        }
+
+        val completedIds = completions.map { it.habitId }.toSet()
+
         provideContent {
             GlanceTheme {
-                HabitWidgetContent(habits)
+                HabitWidgetContent(habits, completedIds)
             }
         }
     }
 }
 
 @Composable
-fun HabitWidgetContent(habits: List<Habit>) {
-    // Outer Container Card with rounded corners
+fun HabitWidgetContent(habits: List<Habit>, completedIds: Set<Long>) {
+    val today = LocalDate.now()
+    val todayCustomCode = when (today.dayOfWeek) {
+        java.time.DayOfWeek.MONDAY -> 2
+        java.time.DayOfWeek.TUESDAY -> 3
+        java.time.DayOfWeek.WEDNESDAY -> 4
+        java.time.DayOfWeek.THURSDAY -> 5
+        java.time.DayOfWeek.FRIDAY -> 6
+        java.time.DayOfWeek.SATURDAY -> 7
+        java.time.DayOfWeek.SUNDAY -> 1
+    }
+
+    fun isDueToday(habit: Habit): Boolean {
+        return when (habit.frequency.type) {
+            FrequencyType.DAILY -> true
+            FrequencyType.WEEKLY -> true
+            FrequencyType.CUSTOM -> {
+                if (habit.frequency.customDaysOfWeek.isEmpty()) true
+                else todayCustomCode in habit.frequency.customDaysOfWeek
+            }
+        }
+    }
+
+    val dueHabits = habits.filter { isDueToday(it) }
+    val upcomingHabits = habits.filter { !isDueToday(it) }
+
+    val leftToComplete = dueHabits.filter { it.id !in completedIds }
+    val completedToday = dueHabits.filter { it.id in completedIds }
+
     Column(
         modifier = GlanceModifier
             .fillMaxSize()
             .background(GlanceTheme.colors.surface)
             .cornerRadius(20.dp)
-            .padding(16.dp)
+            .padding(14.dp)
     ) {
         // --- Widget Header ---
         Row(
@@ -67,16 +104,15 @@ fun HabitWidgetContent(habits: List<Habit>) {
                 text = "⚡ Aegis Habits",
                 style = TextStyle(
                     color = GlanceTheme.colors.onSurface,
-                    fontSize = 16.sp,
+                    fontSize = 15.sp,
                     fontWeight = FontWeight.Bold
                 )
             )
 
             Spacer(modifier = GlanceModifier.defaultWeight())
 
-            // Habit Count Badge
             Text(
-                text = "${habits.size} active",
+                text = "${completedToday.size}/${dueHabits.size} done",
                 style = TextStyle(
                     color = GlanceTheme.colors.primary,
                     fontSize = 12.sp,
@@ -85,9 +121,9 @@ fun HabitWidgetContent(habits: List<Habit>) {
             )
         }
 
-        Spacer(modifier = GlanceModifier.height(12.dp))
+        Spacer(modifier = GlanceModifier.height(8.dp))
 
-        // --- Content Body ---
+        // --- Content Sections ---
         if (habits.isEmpty()) {
             Box(
                 modifier = GlanceModifier
@@ -98,35 +134,48 @@ fun HabitWidgetContent(habits: List<Habit>) {
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "🎉 All done for today!",
-                    style = TextStyle(
-                        color = GlanceTheme.colors.onSurfaceVariant,
-                        fontSize = 14.sp
-                    )
+                    text = "No habits added yet.",
+                    style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant, fontSize = 13.sp)
                 )
             }
         } else {
-            // Display up to 4 habits nicely in a clean list
             Column(modifier = GlanceModifier.fillMaxWidth()) {
-                habits.take(4).forEachIndexed { index, habit ->
-                    HabitItemRow(habitName = habit.title)
-
-                    // Add a thin spacer divider between rows
-                    if (index < habits.take(4).lastIndex) {
-                        Spacer(modifier = GlanceModifier.height(8.dp))
+                // 1. Left to complete
+                if (leftToComplete.isNotEmpty()) {
+                    Text(
+                        text = "To Complete:",
+                        style = TextStyle(color = GlanceTheme.colors.primary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    )
+                    Spacer(modifier = GlanceModifier.height(4.dp))
+                    leftToComplete.take(2).forEach { habit ->
+                        HabitItemRow(symbol = "⬜", habitName = habit.title)
+                        Spacer(modifier = GlanceModifier.height(4.dp))
                     }
                 }
 
-                // Indicator if there are more habits than fit on the widget card
-                if (habits.size > 4) {
-                    Spacer(modifier = GlanceModifier.height(6.dp))
+                // 2. Completed
+                if (completedToday.isNotEmpty()) {
                     Text(
-                        text = "+ ${habits.size - 4} more habits",
-                        style = TextStyle(
-                            color = GlanceTheme.colors.outline,
-                            fontSize = 11.sp
-                        )
+                        text = "Completed:",
+                        style = TextStyle(color = GlanceTheme.colors.outline, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     )
+                    Spacer(modifier = GlanceModifier.height(4.dp))
+                    completedToday.take(2).forEach { habit ->
+                        HabitItemRow(symbol = "✅", habitName = habit.title)
+                        Spacer(modifier = GlanceModifier.height(4.dp))
+                    }
+                }
+
+                // 3. Upcoming
+                if (upcomingHabits.isNotEmpty()) {
+                    Text(
+                        text = "Upcoming / Other:",
+                        style = TextStyle(color = GlanceTheme.colors.secondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    )
+                    Spacer(modifier = GlanceModifier.height(4.dp))
+                    upcomingHabits.take(1).forEach { habit ->
+                        HabitItemRow(symbol = "⏳", habitName = habit.title)
+                    }
                 }
             }
         }
@@ -134,28 +183,22 @@ fun HabitWidgetContent(habits: List<Habit>) {
 }
 
 @Composable
-fun HabitItemRow(habitName: String) {
+fun HabitItemRow(symbol: String, habitName: String) {
     Row(
         modifier = GlanceModifier
             .fillMaxWidth()
             .background(GlanceTheme.colors.secondaryContainer)
-            .cornerRadius(10.dp)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .cornerRadius(8.dp)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Checkbox bullet point styling
-        Text(
-            text = "▫️",
-            style = TextStyle(fontSize = 12.sp)
-        )
-
-        Spacer(modifier = GlanceModifier.width(8.dp))
-
+        Text(text = symbol, style = TextStyle(fontSize = 12.sp))
+        Spacer(modifier = GlanceModifier.width(6.dp))
         Text(
             text = habitName,
             style = TextStyle(
                 color = GlanceTheme.colors.onSecondaryContainer,
-                fontSize = 14.sp,
+                fontSize = 13.sp,
                 fontWeight = FontWeight.Medium
             )
         )
