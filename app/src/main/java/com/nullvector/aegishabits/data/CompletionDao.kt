@@ -36,4 +36,8 @@ interface CompletionDao {
     // Get all completions in the database (crucial for VaultManager backup)
     @Query("SELECT * FROM habit_completions")
     suspend fun getAllCompletions(): List<HabitCompletion>
+
+    // Get all completions as a reactive Flow
+    @Query("SELECT * FROM habit_completions")
+    fun getAllCompletionsFlow(): Flow<List<HabitCompletion>>
 }

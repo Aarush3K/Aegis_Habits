@@ -14,6 +14,7 @@ open class HabitRepository(
     // --- Habit Operations ---
 
     val allHabits: Flow<List<Habit>> = habitDao.getAllActiveHabits()
+    val allCompletions: Flow<List<HabitCompletion>> = completionDao.getAllCompletionsFlow()
 
     suspend fun getHabitById(id: Long): Habit? {
         return habitDao.getHabitById(id)
