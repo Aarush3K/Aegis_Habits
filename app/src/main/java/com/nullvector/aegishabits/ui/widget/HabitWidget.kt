@@ -27,7 +27,6 @@ import androidx.glance.text.TextStyle
 import com.nullvector.aegishabits.data.AppDatabase
 import com.nullvector.aegishabits.model.FrequencyType
 import com.nullvector.aegishabits.model.Habit
-import kotlinx.coroutines.flow.firstOrNull
 import java.time.LocalDate
 
 class HabitWidget : GlanceAppWidget() {
@@ -37,13 +36,13 @@ class HabitWidget : GlanceAppWidget() {
         val todayStr = LocalDate.now().toString()
 
         val habits: List<Habit> = try {
-            db.habitDao().getAllActiveHabits().firstOrNull() ?: emptyList()
+            db.habitDao().getAllActiveHabitsList()
         } catch (e: Exception) {
             emptyList()
         }
 
         val completions = try {
-            db.completionDao().getCompletionsForDate(todayStr).firstOrNull() ?: emptyList()
+            db.completionDao().getCompletionsListForDate(todayStr)
         } catch (e: Exception) {
             emptyList()
         }
