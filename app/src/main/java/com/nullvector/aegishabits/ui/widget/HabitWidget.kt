@@ -88,8 +88,8 @@ fun HabitWidgetContent(habits: List<Habit>, completedIds: Set<Long>) {
     }
 
     val dueHabits = habits.filter { isDueToday(it) }
-    val leftToComplete = dueHabits.filter { it.id !in completedIds }
-    val completedToday = dueHabits.filter { it.id in completedIds }
+    val pendingHabits = dueHabits.filter { it.id !in completedIds }
+    val completedCount = dueHabits.size - pendingHabits.size
 
     Column(
         modifier = GlanceModifier
@@ -115,7 +115,7 @@ fun HabitWidgetContent(habits: List<Habit>, completedIds: Set<Long>) {
             Spacer(modifier = GlanceModifier.defaultWeight())
 
             Text(
-                text = "${completedToday.size}/${dueHabits.size} done",
+                text = if (dueHabits.isNotEmpty()) "$completedCount/${dueHabits.size} done" else "Today",
                 style = TextStyle(
                     color = GlanceTheme.colors.primary,
                     fontSize = 12.sp,
@@ -126,8 +126,8 @@ fun HabitWidgetContent(habits: List<Habit>, completedIds: Set<Long>) {
 
         Spacer(modifier = GlanceModifier.height(8.dp))
 
-        // --- Content Sections ---
-        if (dueHabits.isEmpty()) {
+        // --- Pending Tasks or Motivational Message ---
+        if (pendingHabits.isEmpty()) {
             Box(
                 modifier = GlanceModifier
                     .fillMaxSize()
@@ -136,27 +136,46 @@ fun HabitWidgetContent(habits: List<Habit>, completedIds: Set<Long>) {
                     .padding(12.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = "🎉 All done for today!",
-                    style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant, fontSize = 13.sp)
-                )
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "🌟 Fantastic job!",
+                        style = TextStyle(
+                            color = GlanceTheme.colors.onSurfaceVariant,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    )
+                    Spacer(modifier = GlanceModifier.height(4.dp))
+                    Text(
+                        text = if (dueHabits.isNotEmpty())
+                            "All tasks completed today! Keep pushing forward! 🔥"
+                        else
+                            "No pending tasks for today. Rest up or add new goals! 💪",
+                        style = TextStyle(
+                            color = GlanceTheme.colors.onSurfaceVariant,
+                            fontSize = 12.sp
+                        )
+                    )
+                }
             }
         } else {
             Column(modifier = GlanceModifier.fillMaxWidth()) {
-                // 1. Left to complete
-                if (leftToComplete.isNotEmpty()) {
-                    leftToComplete.take(3).forEach { habit ->
-                        HabitItemRow(symbol = "⬜", habitName = habit.title)
-                        Spacer(modifier = GlanceModifier.height(4.dp))
-                    }
+                pendingHabits.take(4).forEach { habit ->
+                    HabitItemRow(symbol = habit.icon.ifBlank { "📌" }, habitName = habit.title)
+                    Spacer(modifier = GlanceModifier.height(4.dp))
                 }
-
-                // 2. Completed today
-                if (completedToday.isNotEmpty()) {
-                    completedToday.take(3).forEach { habit ->
-                        HabitItemRow(symbol = "✅", habitName = habit.title)
-                        Spacer(modifier = GlanceModifier.height(4.dp))
-                    }
+                if (pendingHabits.size > 4) {
+                    Text(
+                        text = "+${pendingHabits.size - 4} more pending",
+                        style = TextStyle(
+                            color = GlanceTheme.colors.primary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        ),
+                        modifier = GlanceModifier.padding(start = 4.dp, top = 2.dp)
+                    )
                 }
             }
         }
@@ -173,8 +192,8 @@ fun HabitItemRow(symbol: String, habitName: String) {
             .padding(horizontal = 10.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(text = symbol, style = TextStyle(fontSize = 12.sp))
-        Spacer(modifier = GlanceModifier.width(6.dp))
+        Text(text = symbol, style = TextStyle(fontSize = 13.sp))
+        Spacer(modifier = GlanceModifier.width(8.dp))
         Text(
             text = habitName,
             style = TextStyle(
