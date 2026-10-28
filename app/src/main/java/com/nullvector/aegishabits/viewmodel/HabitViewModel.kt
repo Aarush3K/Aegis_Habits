@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.update
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import com.nullvector.aegishabits.notification.HabitReminderManager
 
 enum class HabitTab(val title: String) {
     TODAY("Today"),
@@ -62,9 +63,50 @@ class HabitViewModel(
     private val appContext: Context? = null
 ) : ViewModel() {
 
+    private val reminderManager: HabitReminderManager
+        get() = HabitReminderManager(appContext!!)
+
     private val currentDate = MutableStateFlow(todayKey())
     private val currentTab = MutableStateFlow(HabitTab.TODAY)
     private val _message = MutableStateFlow<String?>(null)
+
+
+    // Inside HabitViewModel methods:
+
+    fun addHabit(name: String, color: Int, icon: String, frequencyType: FrequencyType, targetDays: Int, customDays: List<Int>, reminderTime: String?) {
+        viewModelScope.launch {
+            val newHabit = Habit(
+                title = name,
+                color = color,
+                icon = icon,
+                frequency = Frequency(type = frequencyType, customDaysOfWeek = customDays),
+                reminderTime = reminderTime
+            )
+            val insertedId = repository.insertHabit(newHabit)
+
+            if (!reminderTime.isNullOrBlank()) {
+                reminderManager.scheduleReminder(insertedId, name, reminderTime)
+            }
+        }
+    }
+
+    fun updateHabit(habit: Habit) {
+        viewModelScope.launch {
+            repository.updateHabit(habit)
+            if (!habit.reminderTime.isNullOrBlank()) {
+                reminderManager.scheduleReminder(habit.id, habit.title, habit.reminderTime)
+            } else {
+                reminderManager.cancelReminder(habit.id)
+            }
+        }
+    }
+
+    fun deleteHabit(habit: Habit) {
+        viewModelScope.launch {
+            reminderManager.cancelReminder(habit.id)
+            repository.deleteHabit(habit)
+        }
+    }
 
     fun selectTab(tab: HabitTab) {
         currentTab.value = tab

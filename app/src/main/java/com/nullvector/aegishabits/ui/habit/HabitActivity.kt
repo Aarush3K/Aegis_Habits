@@ -444,8 +444,8 @@ fun HabitScreen(
     if (showAddDialog) {
         AddHabitDialog(
             onDismiss = { showAddDialog = false },
-            onConfirm = { name, color, icon, frequencyType, targetDays, customDays ->
-                viewModel.addHabit(name, color, icon, frequencyType, targetDays, customDays)
+            onConfirm = { name, color, icon, frequencyType, targetDays, customDays, reminderTime ->
+                viewModel.addHabit(name, color, icon, frequencyType, targetDays, customDays, reminderTime)
                 showAddDialog = false
             },
         )
@@ -455,7 +455,7 @@ fun HabitScreen(
         AddHabitDialog(
             initialHabit = item.habit,
             onDismiss = { habitToEdit = null },
-            onConfirm = { name, color, icon, frequencyType, targetDays, customDays ->
+            onConfirm = { name, color, icon, frequencyType, targetDays, customDays, reminderTime ->
                 val updatedHabit = item.habit.copy(
                     title = name,
                     color = color,
@@ -463,7 +463,8 @@ fun HabitScreen(
                     frequency = item.habit.frequency.copy(
                         type = frequencyType,
                         customDaysOfWeek = customDays
-                    )
+                    ),
+                    reminderTime = reminderTime
                 )
                 viewModel.updateHabit(updatedHabit)
                 habitToEdit = null
@@ -880,7 +881,7 @@ private fun HabitActionDialog(
 private fun AddHabitDialog(
     initialHabit: Habit? = null,
     onDismiss: () -> Unit,
-    onConfirm: (name: String, color: Int, icon: String, frequencyType: FrequencyType, targetDays: Int, customDays: List<Int>) -> Unit,
+    onConfirm: (name: String, color: Int, icon: String, frequencyType: FrequencyType, targetDays: Int, customDays: List<Int>, reminderTime: String?) -> Unit,
 ) {
     var name by rememberSaveable { mutableStateOf(initialHabit?.title ?: "") }
     var color by rememberSaveable { mutableIntStateOf(initialHabit?.color ?: habitColors.first()) }
@@ -888,6 +889,10 @@ private fun AddHabitDialog(
     var frequencyType by rememberSaveable {
         mutableStateOf(initialHabit?.frequency?.type ?: FrequencyType.DAILY)
     }
+
+    var isReminderEnabled by rememberSaveable { mutableStateOf(!initialHabit?.reminderTime.isNullOrBlank()) }
+    var reminderTime by rememberSaveable { mutableStateOf(initialHabit?.reminderTime ?: "08:00") }
+    var showTimePicker by remember { mutableStateOf(false) }
 
     val daysMapping = listOf(
         "M" to 2, "T" to 3, "W" to 4, "T" to 5, "F" to 6, "S" to 7, "S" to 1
@@ -975,13 +980,36 @@ private fun AddHabitDialog(
                         }
                     }
                 }
+
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Daily Reminder", style = MaterialTheme.typography.bodyMedium)
+                    androidx.compose.material3.Switch(
+                        checked = isReminderEnabled,
+                        onCheckedChange = { isReminderEnabled = it }
+                    )
+                }
+
+                if (isReminderEnabled) {
+                    androidx.compose.material3.OutlinedButton(
+                        onClick = { showTimePicker = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Remind at: $reminderTime")
+                    }
+                }
             }
         },
         confirmButton = {
             TextButton(
                 onClick = {
                     if (name.isNotBlank()) {
-                        onConfirm(name, color, icon, frequencyType, 1, selectedDays.toList())
+                        val finalReminderTime = if (isReminderEnabled) reminderTime else null
+                        onConfirm(name, color, icon, frequencyType, 1, selectedDays.toList(), finalReminderTime)
                     }
                 }
             ) {
@@ -992,4 +1020,24 @@ private fun AddHabitDialog(
             TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
+
+    if (showTimePicker) {
+        val context = androidx.compose.ui.platform.LocalContext.current
+        val parts = reminderTime.split(":")
+        val initialHour = parts.getOrNull(0)?.toIntOrNull() ?: 8
+        val initialMinute = parts.getOrNull(1)?.toIntOrNull() ?: 0
+
+        android.app.TimePickerDialog(
+            context,
+            { _, hour: Int, minute: Int ->
+                reminderTime = String.format("%02d:%02d", hour, minute)
+                showTimePicker = false
+            },
+            initialHour,
+            initialMinute,
+            true
+        ).apply {
+            setOnCancelListener { showTimePicker = false }
+        }.show()
+    }
 }
