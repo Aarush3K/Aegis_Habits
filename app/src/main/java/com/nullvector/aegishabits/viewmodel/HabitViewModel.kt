@@ -20,6 +20,10 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.flow.update
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 enum class HabitTab(val title: String) {
     TODAY("Today"),
@@ -275,4 +279,37 @@ class HabitViewModel(
 
     private fun todayKey(): String =
         SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-}
+
+
+    // --- Habit Detail State & Logic (INSIDE HabitViewModel class) ---
+    private val _detailUiState = MutableStateFlow(HabitDetailUiState())
+    val detailUiState: StateFlow<HabitDetailUiState> = _detailUiState.asStateFlow()
+
+    fun openHabitDetail(habit: Habit) {
+        viewModelScope.launch {
+            _detailUiState.update { it.copy(selectedHabit = habit, isLoading = true) }
+
+            val completionList = repository.getCompletionsListForHabit(habit.id)
+
+            _detailUiState.update {
+                it.copy(
+                    completions = completionList,
+                    isLoading = false
+                )
+            }
+        }
+    }
+
+    fun closeHabitDetail() {
+        _detailUiState.update { HabitDetailUiState() }
+    }
+
+} // <--- Class closes HERE!
+
+// Place HabitDetailUiState OUTSIDE the class at the very bottom
+data class HabitDetailUiState(
+    val selectedHabit: Habit? = null,
+    val completions: List<HabitCompletion> = emptyList(),
+    val isLoading: Boolean = false
+)
+

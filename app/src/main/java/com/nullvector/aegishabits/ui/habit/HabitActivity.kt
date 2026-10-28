@@ -124,7 +124,7 @@ import androidx.compose.animation.core.Animatable
 import kotlinx.coroutines.delay
 import androidx.compose.ui.unit.Dp
 import androidx.compose.animation.Crossfade
-
+import com.nullvector.aegishabits.ui.components.HabitDetailBottomSheet
 
 class HabitActivity : ComponentActivity() {
 
@@ -215,6 +215,7 @@ fun HabitScreen(
     onToggleTheme: () -> Unit
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val detailUiState by viewModel.detailUiState.collectAsStateWithLifecycle()
     var showAddDialog by rememberSaveable { mutableStateOf(false) }
     var selectedHabitForAction by remember { mutableStateOf<HabitUiItem?>(null) }
     var habitToEdit by remember { mutableStateOf<HabitUiItem?>(null) }
@@ -407,7 +408,8 @@ fun HabitScreen(
                                     userJustToggled = true // <--- Add this right here!
                                     viewModel.toggleCompletion(habitId)
                                 },
-                                onItemLongClick = { habitItem -> selectedHabitForAction = habitItem }
+                                onItemLongClick = { habitItem -> selectedHabitForAction = habitItem },
+                                onHabitClick = { habit -> viewModel.openHabitDetail(habit) }
                             )
                         }
                     }
@@ -417,6 +419,15 @@ fun HabitScreen(
                     ConfettiEffect(modifier = Modifier.fillMaxSize())
                 }
             }
+        }
+        detailUiState.selectedHabit?.let { habit ->
+            HabitDetailBottomSheet(
+                habit = habit,
+                completions = detailUiState.completions,
+                onDismiss = {
+                    viewModel.closeHabitDetail()
+                }
+            )
         }
     }
 
@@ -573,6 +584,7 @@ private fun HabitList(
     state: HabitUiState,
     onToggle: (Long) -> Unit,
     onItemLongClick: (HabitUiItem) -> Unit,
+    onHabitClick: (Habit) -> Unit
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -594,7 +606,8 @@ private fun HabitList(
                 item = item,
                 selectedTab = state.selectedTab,
                 onToggle = { onToggle(item.habit.id) },
-                onLongClick = { onItemLongClick(item) }
+                onLongClick = { onItemLongClick(item) },
+                onClick = { onHabitClick(item.habit) }
             )
         }
     }
@@ -635,7 +648,8 @@ private fun HabitRow(
     item: HabitUiItem,
     selectedTab: HabitTab,
     onToggle: () -> Unit,
-    onLongClick: () -> Unit
+    onLongClick: () -> Unit,
+    onClick: () -> Unit
 ) {
     val habit = item.habit
     val habitColor = Color(habit.color)
@@ -681,16 +695,10 @@ private fun HabitRow(
                 scaleY = cardScale
             }
             .clip(RoundedCornerShape(16.dp))
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onPress = {
-                        isPressed = true
-                        tryAwaitRelease()
-                        isPressed = false
-                    },
-                    onLongPress = { onLongClick() }
-                )
-            },
+            .combinedClickable(
+                onClick = { onClick() },
+                onLongClick = { onLongClick() }
+            ),
         shape = RoundedCornerShape(16.dp),
     ) {
         Row(
