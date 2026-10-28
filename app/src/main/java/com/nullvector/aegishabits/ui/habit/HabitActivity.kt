@@ -110,7 +110,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.core.tween
-
+import androidx.compose.ui.platform.LocalView
+import android.view.HapticFeedbackConstants
 class HabitActivity : ComponentActivity() {
 
     private val viewModel: HabitViewModel by viewModels {
@@ -184,7 +185,18 @@ fun HabitScreen(viewModel: HabitViewModel) {
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
 
-    // Inside HabitScreen:
+    val isAllDoneToday = state.todayTotalCount > 0 && state.todayCompletedCount == state.todayTotalCount
+    var showConfetti by remember { mutableStateOf(false) }
+
+
+    // Trigger a fresh confetti state whenever 100% is reached
+
+    LaunchedEffect(isAllDoneToday) {
+        if (isAllDoneToday) {
+            showConfetti = true
+        }
+    }
+
     LaunchedEffect(Unit) {
         viewModel.refreshDate()
     }
@@ -193,7 +205,7 @@ fun HabitScreen(viewModel: HabitViewModel) {
     DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-                viewModel.refreshDate() // Triggers date refresh whenever app comes to foreground
+                viewModel.refreshDate()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -207,7 +219,6 @@ fun HabitScreen(viewModel: HabitViewModel) {
         pageCount = { HabitTab.entries.size }
     )
 
-    // 1. Instantly update ViewModel tab when swipe begins/changes
     LaunchedEffect(pagerState.currentPage) {
         val targetTab = HabitTab.entries[pagerState.currentPage]
         if (targetTab != state.selectedTab) {
@@ -215,12 +226,7 @@ fun HabitScreen(viewModel: HabitViewModel) {
         }
     }
 
-// 2. Animate Pager when bottom bar item is clicked
-    LaunchedEffect(state.selectedTab) {
-        if (pagerState.currentPage != state.selectedTab.ordinal) {
-            pagerState.scrollToPage(state.selectedTab.ordinal)
-        }
-    }
+
 
     LaunchedEffect(state.message) {
         state.message?.let {
@@ -278,41 +284,56 @@ fun HabitScreen(viewModel: HabitViewModel) {
             }
         },
     ) { padding ->
-        HorizontalPager(
-            state = pagerState,
+        Box(
             modifier = Modifier
                 .padding(padding)
                 .fillMaxSize()
-        ) { page ->
-            val pageTab = HabitTab.entries[page]
+        ) {
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize()
+            ) { page ->
+                val pageTab = HabitTab.entries[page]
 
-            // Get the correct pre-calculated list for this specific page
-            val pageHabits = when (pageTab) {
-                HabitTab.TODAY -> state.todayHabits
-                HabitTab.ALL -> state.allHabitsList
-                HabitTab.ARCHIVED -> state.archivedHabitsList
+                val pageHabits = when (pageTab) {
+                    HabitTab.TODAY -> state.todayHabits
+                    HabitTab.ALL -> state.allHabitsList
+                    HabitTab.ARCHIVED -> state.archivedHabitsList
+                }
+
+                val pageState = state.copy(
+                    habits = pageHabits,
+                    selectedTab = pageTab
+                )
+
+                Box(modifier = Modifier.fillMaxSize()) {
+                    when {
+                        state.isLoading && pageHabits.isEmpty() ->
+                            CircularProgressIndicator(Modifier.align(Alignment.Center))
+
+                        pageHabits.isEmpty() -> {
+                            AnimatedVisibility(
+                                visible = true,
+                                enter = fadeIn(animationSpec = tween(300)) + scaleIn(initialScale = 0.92f, animationSpec = tween(300)),
+                                modifier = Modifier.align(Alignment.Center)
+                            ) {
+                                EmptyState(tab = pageTab)
+                            }
+                        }
+
+                        else -> HabitList(
+                            state = pageState,
+                            onToggle = { habitId -> viewModel.toggleCompletion(habitId) },
+                            onItemLongClick = { habitItem -> selectedHabitForAction = habitItem }
+                        )
+                    }
+                }
             }
 
-            // Create a local UI state copy for this page using its specific list
-            val pageState = state.copy(
-                habits = pageHabits,
-                selectedTab = pageTab
-            )
-
-            Box(modifier = Modifier.fillMaxSize()) {
-                when {
-                    state.isLoading && pageHabits.isEmpty() ->
-                        CircularProgressIndicator(Modifier.align(Alignment.Center))
-
-                    pageHabits.isEmpty() ->
-                        EmptyState(tab = pageTab, modifier = Modifier.align(Alignment.Center))
-
-                    else -> HabitList(
-                        state = pageState,
-                        onToggle = { habitId -> viewModel.toggleCompletion(habitId) },
-                        onItemLongClick = { habitItem -> selectedHabitForAction = habitItem }
-                    )
-                }
+            // Confetti overlay renders over the pager when Today's habits hit 100%
+            // Confetti overlay renders over the pager when triggered
+            if (showConfetti) {
+                ConfettiEffect(modifier = Modifier.fillMaxSize())
             }
         }
     }
@@ -374,6 +395,101 @@ fun HabitScreen(viewModel: HabitViewModel) {
     }
 }
 
+@Composable
+fun ConfettiEffect(
+    modifier: Modifier = Modifier,
+    particleCount: Int = 50
+) {
+    val colors = listOf(
+        Color(0xFF3B6FE0),
+        Color(0xFF4CC38A),
+        Color(0xFFF5B83D),
+        Color(0xFFF2766B),
+        Color(0xFF8E7CF3),
+        Color(0xFFE86FB0)
+    )
+
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val density = androidx.compose.ui.platform.LocalDensity.current
+
+    val screenWidthPx = with(density) { configuration.screenWidthDp.dp.toPx() }
+    val screenHeightPx = with(density) { configuration.screenHeightDp.dp.toPx() }
+
+    // Fallback safeguard in case layout bounds aren't measured instantly
+    val effectiveWidth = if (screenWidthPx > 0f) screenWidthPx else 1080f
+    val effectiveHeight = if (screenHeightPx > 0f) screenHeightPx else 1920f
+
+    val particles = remember {
+        List(particleCount) {
+            ParticleParams(
+                startX = (0..effectiveWidth.toInt()).random().toFloat(),
+                size = (12..20).random().dp,
+                color = colors.random(),
+                speed = (1500..2500).random(),
+                delay = (0..400).random()
+            )
+        }
+    }
+
+    Box(modifier = modifier.fillMaxSize()) {
+        particles.forEach { p ->
+            ParticleItem(
+                startX = p.startX,
+                particleSize = p.size,
+                color = p.color,
+                speed = p.speed,
+                delay = p.delay,
+                screenHeightPx = effectiveHeight
+            )
+        }
+    }
+}
+
+@Composable
+fun ParticleItem(
+    startX: Float,
+    particleSize: androidx.compose.ui.unit.Dp,
+    color: Color,
+    speed: Int,
+    delay: Int,
+    screenHeightPx: Float
+) {
+    // Using an explicit Animatable value so it triggers a run animation on mount
+    val animatableProgress = remember { androidx.compose.animation.core.Animatable(0f) }
+
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(delay.toLong())
+        animatableProgress.animateTo(
+            targetValue = 1f,
+            animationSpec = tween(durationMillis = speed, easing = LinearOutSlowInEasing)
+        )
+    }
+
+    val progress = animatableProgress.value
+
+    // Only render if it has started or is in progress
+    if (progress > 0f) {
+        Box(
+            modifier = Modifier
+                .graphicsLayer {
+                    translationX = startX
+                    translationY = progress * screenHeightPx
+                    alpha = 1f - (progress * 0.8f) // Fade out slightly at the bottom
+                    rotationZ = progress * 360f
+                }
+                .size(particleSize)
+                .background(color, CircleShape)
+        )
+    }
+}
+
+private data class ParticleParams(
+    val startX: Float,
+    val size: androidx.compose.ui.unit.Dp,
+    val color: Color,
+    val speed: Int,
+    val delay: Int
+)
 @Composable
 private fun HabitList(
     state: HabitUiState,
@@ -446,6 +562,7 @@ private fun HabitRow(
     val habit = item.habit
     val habitColor = Color(habit.color)
     val isTodayView = selectedTab == HabitTab.TODAY
+    val view = LocalView.current
 
     // Optimistic completion state for instant checkbox feedback
     var localCompleted by remember(item.isCompleted) { mutableStateOf(item.isCompleted) }
@@ -565,6 +682,7 @@ private fun HabitRow(
                         checked = localCompleted,
                         onCheckedChange = { checked ->
                             localCompleted = checked
+                            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
                             onToggle()
                         },
                         colors = CheckboxDefaults.colors(checkedColor = habitColor),
@@ -756,8 +874,10 @@ private fun AddHabitDialog(
 
                 if (frequencyType == FrequencyType.CUSTOM) {
                     Text("Select Days", style = MaterialTheme.typography.bodyMedium)
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        daysMapping.forEach { (label, dayCode) ->
+
+                    // Changed from a static Row to a LazyRow so all 7 days can be scrolled through
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(daysMapping) { (label, dayCode) ->
                             val isSelected = selectedDays.contains(dayCode)
                             FilterChip(
                                 selected = isSelected,
