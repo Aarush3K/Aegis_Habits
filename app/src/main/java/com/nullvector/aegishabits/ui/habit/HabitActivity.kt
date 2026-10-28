@@ -981,13 +981,20 @@ private fun AddHabitDialog(
                     }
                 }
 
+                // Determine reminder label dynamically based on selected frequency
+                val reminderLabelText = when (frequencyType) {
+                    FrequencyType.DAILY -> "Daily Reminder"
+                    FrequencyType.WEEKLY -> "Weekly Reminder"
+                    FrequencyType.CUSTOM -> "Reminder"
+                }
+
                 Spacer(Modifier.height(8.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text("Daily Reminder", style = MaterialTheme.typography.bodyMedium)
+                    Text(reminderLabelText, style = MaterialTheme.typography.bodyMedium)
                     androidx.compose.material3.Switch(
                         checked = isReminderEnabled,
                         onCheckedChange = { isReminderEnabled = it }
