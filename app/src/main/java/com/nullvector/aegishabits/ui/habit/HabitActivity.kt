@@ -403,7 +403,10 @@ fun HabitScreen(
 
                             else -> HabitList(
                                 state = pageState,
-                                onToggle = { habitId -> viewModel.toggleCompletion(habitId) },
+                                onToggle = { habitId ->
+                                    userJustToggled = true // <--- Add this right here!
+                                    viewModel.toggleCompletion(habitId)
+                                },
                                 onItemLongClick = { habitItem -> selectedHabitForAction = habitItem }
                             )
                         }
