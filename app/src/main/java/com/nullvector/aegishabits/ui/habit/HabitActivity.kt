@@ -135,23 +135,37 @@ class HabitActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // 1. Read saved preference early before layout inflates
+        val sharedPreferences = getSharedPreferences("aegis_habits_prefs", MODE_PRIVATE)
+        val isSystemDark = (resources.configuration.uiMode and
+                android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+                android.app.UiModeManager.MODE_NIGHT_YES
+        val isDarkModeSaved = sharedPreferences.getBoolean("is_dark_mode", isSystemDark)
+
+        // 2. Set the window background color dynamically to prevent the white flash
+        window.decorView.setBackgroundColor(
+            if (isDarkModeSaved) android.graphics.Color.parseColor("#121212") // Dark background
+            else android.graphics.Color.parseColor("#FFFBFE")                 // Light background
+        )
+
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
         setContent {
-            var isDarkMode by rememberSaveable { mutableStateOf(false) }
+            var isDarkMode by rememberSaveable { mutableStateOf(isDarkModeSaved) }
 
             AegisHabitsTheme(darkTheme = isDarkMode) {
-                // Crossfade the entire content tree smoothly on the GPU layer
-                Crossfade(
-                    targetState = isDarkMode,
-                    animationSpec = tween(durationMillis = 350),
-                    label = "root_theme_crossfade"
-                ) { dark ->
-                    // Pass the current dark state down
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
                     HabitScreen(
                         viewModel = viewModel,
-                        isDarkMode = dark,
-                        onToggleTheme = { isDarkMode = !isDarkMode }
+                        isDarkMode = isDarkMode,
+                        onToggleTheme = {
+                            isDarkMode = !isDarkMode
+                            sharedPreferences.edit().putBoolean("is_dark_mode", isDarkMode).apply()
+                        }
                     )
                 }
             }
@@ -631,6 +645,8 @@ private fun ProgressHeader(done: Int, total: Int) {
         Text(
             text = "$done of $total done today",
             style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onBackground,
+            fontWeight = FontWeight.SemiBold
         )
         Spacer(Modifier.height(8.dp))
         LinearProgressIndicator(

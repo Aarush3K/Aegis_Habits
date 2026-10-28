@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Use the standard Material Dark theme base without the android: namespace prefix -->
+    <style name="Theme.AegisHabits" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#121212</item>
+    </style>
+</resources>
