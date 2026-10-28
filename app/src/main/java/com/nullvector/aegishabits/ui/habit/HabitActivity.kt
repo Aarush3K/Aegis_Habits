@@ -109,9 +109,23 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
-import androidx.compose.animation.core.tween
 import androidx.compose.ui.platform.LocalView
 import android.view.HapticFeedbackConstants
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.WbSunny
+import androidx.compose.material3.IconButton
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.animation.core.Animatable
+import kotlinx.coroutines.delay
+import androidx.compose.ui.unit.Dp
+import androidx.compose.animation.Crossfade
+
+
 class HabitActivity : ComponentActivity() {
 
     private val viewModel: HabitViewModel by viewModels {
@@ -124,8 +138,22 @@ class HabitActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            AegisHabitsTheme {
-                HabitScreen(viewModel)
+            var isDarkMode by rememberSaveable { mutableStateOf(false) }
+
+            AegisHabitsTheme(darkTheme = isDarkMode) {
+                // Crossfade the entire content tree smoothly on the GPU layer
+                Crossfade(
+                    targetState = isDarkMode,
+                    animationSpec = tween(durationMillis = 350),
+                    label = "root_theme_crossfade"
+                ) { dark ->
+                    // Pass the current dark state down
+                    HabitScreen(
+                        viewModel = viewModel,
+                        isDarkMode = dark,
+                        onToggleTheme = { isDarkMode = !isDarkMode }
+                    )
+                }
             }
         }
     }
@@ -175,9 +203,17 @@ private fun Habit.frequencyLabel(): String {
 // Main dashboard
 // ---------------------------------------------------------------------------
 
+// Inside your HabitViewModel.kt
+
+
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HabitScreen(viewModel: HabitViewModel) {
+fun HabitScreen(
+    viewModel: HabitViewModel,
+    isDarkMode: Boolean,
+    onToggleTheme: () -> Unit
+) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var showAddDialog by rememberSaveable { mutableStateOf(false) }
     var selectedHabitForAction by remember { mutableStateOf<HabitUiItem?>(null) }
@@ -185,17 +221,38 @@ fun HabitScreen(viewModel: HabitViewModel) {
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
 
-    val isAllDoneToday = state.todayTotalCount > 0 && state.todayCompletedCount == state.todayTotalCount
+    // Confetti celebration state
     var showConfetti by remember { mutableStateOf(false) }
+    var hasCelebratedToday by rememberSaveable { mutableStateOf(false) }
 
+    // Track if the user just actively interacted with a checkbox
+    var userJustToggled by remember { mutableStateOf(false) }
 
-    // Trigger a fresh confetti state whenever 100% is reached
+    val isAllDoneToday = state.todayTotalCount > 0 && state.todayCompletedCount == state.todayTotalCount
 
-    LaunchedEffect(isAllDoneToday) {
-        if (isAllDoneToday) {
+    // Only fire confetti if ALL conditions are met:
+    // 1. It is 100% complete
+    // 2. We haven't celebrated yet today
+    // 3. The user actively tapped a checkmark (blocking theme toggle re-triggers)
+    LaunchedEffect(state.todayCompletedCount) {
+        if (userJustToggled && isAllDoneToday && !hasCelebratedToday) {
             showConfetti = true
+            hasCelebratedToday = true
+        } else if (!isAllDoneToday) {
+            hasCelebratedToday = false
         }
+        userJustToggled = false // Reset toggle flag immediately after evaluation
     }
+
+    // Pass this trigger into your HabitList/toggles down below:
+
+    // Smooth background color animation using drawBehind
+    val targetBackgroundColor = MaterialTheme.colorScheme.background
+    val animatedBgColor by animateColorAsState(
+        targetValue = targetBackgroundColor,
+        animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+        label = "theme_fade"
+    )
 
     LaunchedEffect(Unit) {
         viewModel.refreshDate()
@@ -226,8 +283,6 @@ fun HabitScreen(viewModel: HabitViewModel) {
         }
     }
 
-
-
     LaunchedEffect(state.message) {
         state.message?.let {
             snackbarHostState.showSnackbar(it)
@@ -235,105 +290,129 @@ fun HabitScreen(viewModel: HabitViewModel) {
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = state.selectedTab.title,
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.titleLarge
-                    )
-                }
-            )
-        },
-        bottomBar = {
-            NavigationBar {
-                HabitTab.entries.forEach { tab ->
-                    val isSelected = tab == state.selectedTab
-                    val icon: ImageVector = when (tab) {
-                        HabitTab.TODAY -> Icons.Default.Today
-                        HabitTab.ALL -> Icons.Default.List
-                        HabitTab.ARCHIVED -> Icons.Default.Archive
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .drawBehind {
+                drawRect(animatedBgColor)
+            }
+    ) {
+        Scaffold(
+            containerColor = Color.Transparent,
+            topBar = {
+                TopAppBar(
+                    title = {
+                        Text(
+                            text = state.selectedTab.title,
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleLarge
+                        )
+                    },
+                    actions = {
+                        IconButton(onClick = onToggleTheme) {
+                            AnimatedContent(
+                                targetState = isDarkMode,
+                                transitionSpec = {
+                                    (fadeIn(animationSpec = tween(300)) + scaleIn(initialScale = 0.8f)) togetherWith
+                                            (fadeOut(animationSpec = tween(300)) + scaleOut(targetScale = 0.8f))
+                                },
+                                label = "theme_icon_transition"
+                            ) { dark ->
+                                Icon(
+                                    imageVector = if (dark) Icons.Default.WbSunny else Icons.Default.DarkMode,
+                                    contentDescription = "Toggle Dark Mode"
+                                )
+                            }
+                        }
                     }
-
-                    NavigationBarItem(
-                        selected = isSelected,
-                        onClick = {
-                            coroutineScope.launch {
-                                pagerState.animateScrollToPage(tab.ordinal)
-                            }
-                        },
-                        icon = {
-                            Icon(imageVector = icon, contentDescription = tab.title)
-                        },
-                        label = {
-                            Text(tab.title)
-                        }
-                    )
-                }
-            }
-        },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = { showAddDialog = true },
-                modifier = Modifier.padding(bottom = 8.dp)
-            ) {
-                Text("+", fontSize = 24.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
-            }
-        },
-    ) { padding ->
-        Box(
-            modifier = Modifier
-                .padding(padding)
-                .fillMaxSize()
-        ) {
-            HorizontalPager(
-                state = pagerState,
-                modifier = Modifier.fillMaxSize()
-            ) { page ->
-                val pageTab = HabitTab.entries[page]
-
-                val pageHabits = when (pageTab) {
-                    HabitTab.TODAY -> state.todayHabits
-                    HabitTab.ALL -> state.allHabitsList
-                    HabitTab.ARCHIVED -> state.archivedHabitsList
-                }
-
-                val pageState = state.copy(
-                    habits = pageHabits,
-                    selectedTab = pageTab
                 )
-
-                Box(modifier = Modifier.fillMaxSize()) {
-                    when {
-                        state.isLoading && pageHabits.isEmpty() ->
-                            CircularProgressIndicator(Modifier.align(Alignment.Center))
-
-                        pageHabits.isEmpty() -> {
-                            AnimatedVisibility(
-                                visible = true,
-                                enter = fadeIn(animationSpec = tween(300)) + scaleIn(initialScale = 0.92f, animationSpec = tween(300)),
-                                modifier = Modifier.align(Alignment.Center)
-                            ) {
-                                EmptyState(tab = pageTab)
-                            }
+            },
+            bottomBar = {
+                NavigationBar {
+                    HabitTab.entries.forEach { tab ->
+                        val isSelected = tab == state.selectedTab
+                        val icon = when (tab) {
+                            HabitTab.TODAY -> Icons.Default.Today
+                            HabitTab.ALL -> Icons.Default.List
+                            HabitTab.ARCHIVED -> Icons.Default.Archive
                         }
 
-                        else -> HabitList(
-                            state = pageState,
-                            onToggle = { habitId -> viewModel.toggleCompletion(habitId) },
-                            onItemLongClick = { habitItem -> selectedHabitForAction = habitItem }
+                        NavigationBarItem(
+                            selected = isSelected,
+                            onClick = {
+                                coroutineScope.launch {
+                                    pagerState.animateScrollToPage(tab.ordinal)
+                                }
+                            },
+                            icon = {
+                                Icon(imageVector = icon, contentDescription = tab.title)
+                            },
+                            label = {
+                                Text(tab.title)
+                            }
                         )
                     }
                 }
-            }
+            },
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+            floatingActionButton = {
+                FloatingActionButton(
+                    onClick = { showAddDialog = true },
+                    modifier = Modifier.padding(bottom = 8.dp)
+                ) {
+                    Text("+", fontSize = 24.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                }
+            },
+        ) { padding ->
+            Box(
+                modifier = Modifier
+                    .padding(padding)
+                    .fillMaxSize()
+            ) {
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.fillMaxSize()
+                ) { page ->
+                    val pageTab = HabitTab.entries[page]
 
-            // Confetti overlay renders over the pager when Today's habits hit 100%
-            // Confetti overlay renders over the pager when triggered
-            if (showConfetti) {
-                ConfettiEffect(modifier = Modifier.fillMaxSize())
+                    val pageHabits = when (pageTab) {
+                        HabitTab.TODAY -> state.todayHabits
+                        HabitTab.ALL -> state.allHabitsList
+                        HabitTab.ARCHIVED -> state.archivedHabitsList
+                    }
+
+                    val pageState = state.copy(
+                        habits = pageHabits,
+                        selectedTab = pageTab
+                    )
+
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        when {
+                            state.isLoading && pageHabits.isEmpty() ->
+                                CircularProgressIndicator(Modifier.align(Alignment.Center))
+
+                            pageHabits.isEmpty() -> {
+                                AnimatedVisibility(
+                                    visible = true,
+                                    enter = fadeIn(animationSpec = tween(300)) + scaleIn(initialScale = 0.92f, animationSpec = tween(300)),
+                                    modifier = Modifier.align(Alignment.Center)
+                                ) {
+                                    EmptyState(tab = pageTab)
+                                }
+                            }
+
+                            else -> HabitList(
+                                state = pageState,
+                                onToggle = { habitId -> viewModel.toggleCompletion(habitId) },
+                                onItemLongClick = { habitItem -> selectedHabitForAction = habitItem }
+                            )
+                        }
+                    }
+                }
+
+                if (showConfetti) {
+                    ConfettiEffect(modifier = Modifier.fillMaxSize())
+                }
             }
         }
     }
@@ -395,6 +474,15 @@ fun HabitScreen(viewModel: HabitViewModel) {
     }
 }
 
+// Data holder for individual confetti particles
+data class ParticleParams(
+    val startX: Float,
+    val size: Dp,
+    val color: Color,
+    val speed: Int,
+    val delay: Int
+)
+
 @Composable
 fun ConfettiEffect(
     modifier: Modifier = Modifier,
@@ -415,7 +503,6 @@ fun ConfettiEffect(
     val screenWidthPx = with(density) { configuration.screenWidthDp.dp.toPx() }
     val screenHeightPx = with(density) { configuration.screenHeightDp.dp.toPx() }
 
-    // Fallback safeguard in case layout bounds aren't measured instantly
     val effectiveWidth = if (screenWidthPx > 0f) screenWidthPx else 1080f
     val effectiveHeight = if (screenHeightPx > 0f) screenHeightPx else 1920f
 
@@ -448,48 +535,36 @@ fun ConfettiEffect(
 @Composable
 fun ParticleItem(
     startX: Float,
-    particleSize: androidx.compose.ui.unit.Dp,
+    particleSize: Dp,
     color: Color,
     speed: Int,
     delay: Int,
     screenHeightPx: Float
 ) {
-    // Using an explicit Animatable value so it triggers a run animation on mount
-    val animatableProgress = remember { androidx.compose.animation.core.Animatable(0f) }
+    val animatableProgress = remember { Animatable(0f) }
 
     LaunchedEffect(Unit) {
-        kotlinx.coroutines.delay(delay.toLong())
+        delay(delay.toLong())
         animatableProgress.animateTo(
             targetValue = 1f,
             animationSpec = tween(durationMillis = speed, easing = LinearOutSlowInEasing)
         )
     }
 
-    val progress = animatableProgress.value
-
-    // Only render if it has started or is in progress
-    if (progress > 0f) {
-        Box(
-            modifier = Modifier
-                .graphicsLayer {
-                    translationX = startX
-                    translationY = progress * screenHeightPx
-                    alpha = 1f - (progress * 0.8f) // Fade out slightly at the bottom
-                    rotationZ = progress * 360f
-                }
-                .size(particleSize)
-                .background(color, CircleShape)
-        )
-    }
+    Box(
+        modifier = Modifier
+            .graphicsLayer {
+                val progress = animatableProgress.value
+                translationX = startX
+                translationY = progress * screenHeightPx
+                alpha = (1f - (progress * 0.8f)).coerceIn(0f, 1f)
+                rotationZ = progress * 360f
+            }
+            .size(particleSize)
+            .background(color, CircleShape)
+    )
 }
 
-private data class ParticleParams(
-    val startX: Float,
-    val size: androidx.compose.ui.unit.Dp,
-    val color: Color,
-    val speed: Int,
-    val delay: Int
-)
 @Composable
 private fun HabitList(
     state: HabitUiState,
