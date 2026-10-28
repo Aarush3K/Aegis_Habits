@@ -28,6 +28,7 @@ import kotlinx.coroutines.launch
 enum class HabitTab(val title: String) {
     TODAY("Today"),
     ALL("All Habits"),
+    ANALYTICS("Analytics"),
     ARCHIVED("Archived")
 }
 
@@ -135,6 +136,7 @@ class HabitViewModel(
             HabitTab.TODAY -> todayList
             HabitTab.ALL -> allList
             HabitTab.ARCHIVED -> archivedList
+            HabitTab.ANALYTICS -> emptyList()
         }
 
         HabitUiState(

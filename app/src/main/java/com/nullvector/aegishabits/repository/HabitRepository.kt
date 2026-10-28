@@ -107,4 +107,12 @@ open class HabitRepository(
     suspend fun getAllCompletions(): List<HabitCompletion> {
         return completionDao.getAllCompletions()
     }
+
+    suspend fun getCompletionsBetweenDates(startDate: String, endDate: String): List<HabitCompletion> {
+        return completionDao.getCompletionsBetweenDates(startDate, endDate)
+    }
+
+    suspend fun getCompletionDatesForHabit(habitId: Long): List<String> {
+        return completionDao.getCompletionDatesForHabit(habitId)
+    }
 }

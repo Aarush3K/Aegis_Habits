@@ -43,4 +43,23 @@ interface CompletionDao {
     // Get all completions as a reactive Flow
     @Query("SELECT * FROM habit_completions")
     fun getAllCompletionsFlow(): Flow<List<HabitCompletion>>
+
+    // --- Analytics & Correlation Queries ---
+
+    // Get all completions within a specific date range (inclusive)
+    @Query("SELECT * FROM habit_completions WHERE dateString BETWEEN :startDate AND :endDate")
+    suspend fun getCompletionsBetweenDates(startDate: String, endDate: String): List<HabitCompletion>
+
+    // Get distinct completion dates for a specific habit
+    @Query("SELECT dateString FROM habit_completions WHERE habitId = :habitId")
+    suspend fun getCompletionDatesForHabit(habitId: Long): List<String>
+
+    // Get joint completions where both habitA and habitB were completed on the exact same date
+    @Query("""
+        SELECT c1.dateString 
+        FROM habit_completions c1
+        INNER JOIN habit_completions c2 ON c1.dateString = c2.dateString
+        WHERE c1.habitId = :habitIdA AND c2.habitId = :habitIdB
+    """)
+    suspend fun getJointCompletionDates(habitIdA: Long, habitIdB: Long): List<String>
 }
