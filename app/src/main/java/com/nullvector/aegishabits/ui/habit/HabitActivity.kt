@@ -87,6 +87,44 @@ import com.nullvector.aegishabits.viewmodel.HabitUiState
 import com.nullvector.aegishabits.viewmodel.HabitViewModel
 import com.nullvector.aegishabits.viewmodel.HabitViewModelFactory
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.material3.Surface
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.ui.platform.LocalView
+import android.view.HapticFeedbackConstants
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.WbSunny
+import androidx.compose.material3.IconButton
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.animation.core.Animatable
+import kotlinx.coroutines.delay
+import androidx.compose.ui.unit.Dp
+import androidx.compose.animation.Crossfade
+import com.nullvector.aegishabits.ui.components.HabitDetailBottomSheet
 
 class HabitActivity : ComponentActivity() {
 
@@ -97,11 +135,39 @@ class HabitActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // 1. Read saved preference early before layout inflates
+        val sharedPreferences = getSharedPreferences("aegis_habits_prefs", MODE_PRIVATE)
+        val isSystemDark = (resources.configuration.uiMode and
+                android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+                android.app.UiModeManager.MODE_NIGHT_YES
+        val isDarkModeSaved = sharedPreferences.getBoolean("is_dark_mode", isSystemDark)
+
+        // 2. Set the window background color dynamically to prevent the white flash
+        window.decorView.setBackgroundColor(
+            if (isDarkModeSaved) android.graphics.Color.parseColor("#121212") // Dark background
+            else android.graphics.Color.parseColor("#FFFBFE")                 // Light background
+        )
+
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
         setContent {
-            AegisHabitsTheme {
-                HabitScreen(viewModel)
+            var isDarkMode by rememberSaveable { mutableStateOf(isDarkModeSaved) }
+
+            AegisHabitsTheme(darkTheme = isDarkMode) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    HabitScreen(
+                        viewModel = viewModel,
+                        isDarkMode = isDarkMode,
+                        onToggleTheme = {
+                            isDarkMode = !isDarkMode
+                            sharedPreferences.edit().putBoolean("is_dark_mode", isDarkMode).apply()
+                        }
+                    )
+                }
             }
         }
     }
@@ -151,28 +217,80 @@ private fun Habit.frequencyLabel(): String {
 // Main dashboard
 // ---------------------------------------------------------------------------
 
+// Inside your HabitViewModel.kt
+
+
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HabitScreen(viewModel: HabitViewModel) {
+fun HabitScreen(
+    viewModel: HabitViewModel,
+    isDarkMode: Boolean,
+    onToggleTheme: () -> Unit
+) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val detailUiState by viewModel.detailUiState.collectAsStateWithLifecycle()
     var showAddDialog by rememberSaveable { mutableStateOf(false) }
     var selectedHabitForAction by remember { mutableStateOf<HabitUiItem?>(null) }
+    var habitToEdit by remember { mutableStateOf<HabitUiItem?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
+
+    // Confetti celebration state
+    var showConfetti by remember { mutableStateOf(false) }
+    var hasCelebratedToday by rememberSaveable { mutableStateOf(false) }
+
+    // Track if the user just actively interacted with a checkbox
+    var userJustToggled by remember { mutableStateOf(false) }
+
+    val isAllDoneToday = state.todayTotalCount > 0 && state.todayCompletedCount == state.todayTotalCount
+
+    // Only fire confetti if ALL conditions are met:
+    // 1. It is 100% complete
+    // 2. We haven't celebrated yet today
+    // 3. The user actively tapped a checkmark (blocking theme toggle re-triggers)
+    LaunchedEffect(state.todayCompletedCount) {
+        if (userJustToggled && isAllDoneToday && !hasCelebratedToday) {
+            showConfetti = true
+            hasCelebratedToday = true
+        } else if (!isAllDoneToday) {
+            hasCelebratedToday = false
+        }
+        userJustToggled = false // Reset toggle flag immediately after evaluation
+    }
+
+    // Pass this trigger into your HabitList/toggles down below:
+
+    // Smooth background color animation using drawBehind
+    val targetBackgroundColor = MaterialTheme.colorScheme.background
+    val animatedBgColor by animateColorAsState(
+        targetValue = targetBackgroundColor,
+        animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+        label = "theme_fade"
+    )
+
+    LaunchedEffect(Unit) {
+        viewModel.refreshDate()
+    }
+
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                viewModel.refreshDate()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     val pagerState = rememberPagerState(
         initialPage = state.selectedTab.ordinal,
         pageCount = { HabitTab.entries.size }
     )
 
-    // Sync Pager state when ViewModel tab changes externally
-    LaunchedEffect(state.selectedTab) {
-        if (pagerState.currentPage != state.selectedTab.ordinal) {
-            pagerState.animateScrollToPage(state.selectedTab.ordinal)
-        }
-    }
-
-    // Sync ViewModel tab when user swipes the pager
     LaunchedEffect(pagerState.currentPage) {
         val targetTab = HabitTab.entries[pagerState.currentPage]
         if (targetTab != state.selectedTab) {
@@ -187,79 +305,147 @@ fun HabitScreen(viewModel: HabitViewModel) {
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = state.selectedTab.title,
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.titleLarge
-                    )
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .drawBehind {
+                drawRect(animatedBgColor)
+            }
+    ) {
+        Scaffold(
+            containerColor = Color.Transparent,
+            topBar = {
+                TopAppBar(
+                    title = {
+                        Text(
+                            text = state.selectedTab.title,
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleLarge
+                        )
+                    },
+                    actions = {
+                        IconButton(onClick = onToggleTheme) {
+                            AnimatedContent(
+                                targetState = isDarkMode,
+                                transitionSpec = {
+                                    (fadeIn(animationSpec = tween(300)) + scaleIn(initialScale = 0.8f)) togetherWith
+                                            (fadeOut(animationSpec = tween(300)) + scaleOut(targetScale = 0.8f))
+                                },
+                                label = "theme_icon_transition"
+                            ) { dark ->
+                                Icon(
+                                    imageVector = if (dark) Icons.Default.WbSunny else Icons.Default.DarkMode,
+                                    contentDescription = "Toggle Dark Mode"
+                                )
+                            }
+                        }
+                    }
+                )
+            },
+            bottomBar = {
+                NavigationBar {
+                    HabitTab.entries.forEach { tab ->
+                        val isSelected = tab == state.selectedTab
+                        val icon = when (tab) {
+                            HabitTab.TODAY -> Icons.Default.Today
+                            HabitTab.ALL -> Icons.Default.List
+                            HabitTab.ARCHIVED -> Icons.Default.Archive
+                        }
+
+                        NavigationBarItem(
+                            selected = isSelected,
+                            onClick = {
+                                coroutineScope.launch {
+                                    pagerState.animateScrollToPage(tab.ordinal)
+                                }
+                            },
+                            icon = {
+                                Icon(imageVector = icon, contentDescription = tab.title)
+                            },
+                            label = {
+                                Text(tab.title)
+                            }
+                        )
+                    }
                 }
-            )
-        },
-        bottomBar = {
-            // Material3 NavigationBar using proper icons instead of text labels
-            NavigationBar {
-                HabitTab.entries.forEach { tab ->
-                    val isSelected = tab == state.selectedTab
-                    val icon: ImageVector = when (tab) {
-                        HabitTab.TODAY -> Icons.Default.Today
-                        HabitTab.ALL -> Icons.Default.List
-                        HabitTab.ARCHIVED -> Icons.Default.Archive
+            },
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+            floatingActionButton = {
+                FloatingActionButton(
+                    onClick = { showAddDialog = true },
+                    modifier = Modifier.padding(bottom = 8.dp)
+                ) {
+                    Text("+", fontSize = 24.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                }
+            },
+        ) { padding ->
+            Box(
+                modifier = Modifier
+                    .padding(padding)
+                    .fillMaxSize()
+            ) {
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.fillMaxSize()
+                ) { page ->
+                    val pageTab = HabitTab.entries[page]
+
+                    val pageHabits = when (pageTab) {
+                        HabitTab.TODAY -> state.todayHabits
+                        HabitTab.ALL -> state.allHabitsList
+                        HabitTab.ARCHIVED -> state.archivedHabitsList
                     }
 
-                    NavigationBarItem(
-                        selected = isSelected,
-                        onClick = {
-                            coroutineScope.launch {
-                                pagerState.animateScrollToPage(tab.ordinal)
+                    val pageState = state.copy(
+                        habits = pageHabits,
+                        selectedTab = pageTab
+                    )
+
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        when {
+                            state.isLoading && pageHabits.isEmpty() ->
+                                CircularProgressIndicator(Modifier.align(Alignment.Center))
+
+                            pageHabits.isEmpty() -> {
+                                AnimatedVisibility(
+                                    visible = true,
+                                    enter = fadeIn(animationSpec = tween(300)) + scaleIn(initialScale = 0.92f, animationSpec = tween(300)),
+                                    modifier = Modifier.align(Alignment.Center)
+                                ) {
+                                    EmptyState(tab = pageTab)
+                                }
                             }
-                        },
-                        icon = {
-                            Icon(imageVector = icon, contentDescription = tab.title)
+
+                            else -> HabitList(
+                                state = pageState,
+                                onToggle = { habitId ->
+                                    userJustToggled = true // <--- Add this right here!
+                                    viewModel.toggleCompletion(habitId)
+                                },
+                                onItemLongClick = { habitItem -> selectedHabitForAction = habitItem },
+                                onHabitClick = { habit -> viewModel.openHabitDetail(habit) }
+                            )
                         }
-                    )
+                    }
                 }
-            }
-        },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = { showAddDialog = true },
-                modifier = Modifier.padding(bottom = 8.dp)
-            ) {
-                Text("+", fontSize = 24.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
-            }
-        },
-    ) { padding ->
-        HorizontalPager(
-            state = pagerState,
-            modifier = Modifier
-                .padding(padding)
-                .fillMaxSize()
-        ) { page ->
-            val pageTab = HabitTab.entries[page]
 
-            Box(modifier = Modifier.fillMaxSize()) {
-                when {
-                    state.isLoading ->
-                        CircularProgressIndicator(Modifier.align(Alignment.Center))
-
-                    state.habits.isEmpty() ->
-                        EmptyState(tab = pageTab, modifier = Modifier.align(Alignment.Center))
-
-                    else -> HabitList(
-                        state = state,
-                        onToggle = { habitId -> viewModel.toggleCompletion(habitId) },
-                        onItemLongClick = { habitItem -> selectedHabitForAction = habitItem }
-                    )
+                if (showConfetti) {
+                    ConfettiEffect(modifier = Modifier.fillMaxSize())
                 }
             }
         }
+        detailUiState.selectedHabit?.let { habit ->
+            HabitDetailBottomSheet(
+                habit = habit,
+                completions = detailUiState.completions,
+                onDismiss = {
+                    viewModel.closeHabitDetail()
+                }
+            )
+        }
     }
 
+    // Add Habit Dialog
     if (showAddDialog) {
         AddHabitDialog(
             onDismiss = { showAddDialog = false },
@@ -270,10 +456,36 @@ fun HabitScreen(viewModel: HabitViewModel) {
         )
     }
 
+    // Edit Habit Dialog
+    habitToEdit?.let { item ->
+        AddHabitDialog(
+            initialHabit = item.habit,
+            onDismiss = { habitToEdit = null },
+            onConfirm = { name, color, icon, frequencyType, targetDays, customDays ->
+                val updatedHabit = item.habit.copy(
+                    title = name,
+                    color = color,
+                    icon = icon,
+                    frequency = item.habit.frequency.copy(
+                        type = frequencyType,
+                        customDaysOfWeek = customDays
+                    )
+                )
+                viewModel.updateHabit(updatedHabit)
+                habitToEdit = null
+            }
+        )
+    }
+
+    // Long Press Action Dialog
     selectedHabitForAction?.let { item ->
         HabitActionDialog(
             item = item,
             onDismiss = { selectedHabitForAction = null },
+            onEdit = {
+                habitToEdit = item
+                selectedHabitForAction = null
+            },
             onArchive = {
                 viewModel.archiveHabit(item.habit)
                 selectedHabitForAction = null
@@ -290,11 +502,103 @@ fun HabitScreen(viewModel: HabitViewModel) {
     }
 }
 
+// Data holder for individual confetti particles
+data class ParticleParams(
+    val startX: Float,
+    val size: Dp,
+    val color: Color,
+    val speed: Int,
+    val delay: Int
+)
+
+@Composable
+fun ConfettiEffect(
+    modifier: Modifier = Modifier,
+    particleCount: Int = 50
+) {
+    val colors = listOf(
+        Color(0xFF3B6FE0),
+        Color(0xFF4CC38A),
+        Color(0xFFF5B83D),
+        Color(0xFFF2766B),
+        Color(0xFF8E7CF3),
+        Color(0xFFE86FB0)
+    )
+
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val density = androidx.compose.ui.platform.LocalDensity.current
+
+    val screenWidthPx = with(density) { configuration.screenWidthDp.dp.toPx() }
+    val screenHeightPx = with(density) { configuration.screenHeightDp.dp.toPx() }
+
+    val effectiveWidth = if (screenWidthPx > 0f) screenWidthPx else 1080f
+    val effectiveHeight = if (screenHeightPx > 0f) screenHeightPx else 1920f
+
+    val particles = remember {
+        List(particleCount) {
+            ParticleParams(
+                startX = (0..effectiveWidth.toInt()).random().toFloat(),
+                size = (12..20).random().dp,
+                color = colors.random(),
+                speed = (1500..2500).random(),
+                delay = (0..400).random()
+            )
+        }
+    }
+
+    Box(modifier = modifier.fillMaxSize()) {
+        particles.forEach { p ->
+            ParticleItem(
+                startX = p.startX,
+                particleSize = p.size,
+                color = p.color,
+                speed = p.speed,
+                delay = p.delay,
+                screenHeightPx = effectiveHeight
+            )
+        }
+    }
+}
+
+@Composable
+fun ParticleItem(
+    startX: Float,
+    particleSize: Dp,
+    color: Color,
+    speed: Int,
+    delay: Int,
+    screenHeightPx: Float
+) {
+    val animatableProgress = remember { Animatable(0f) }
+
+    LaunchedEffect(Unit) {
+        delay(delay.toLong())
+        animatableProgress.animateTo(
+            targetValue = 1f,
+            animationSpec = tween(durationMillis = speed, easing = LinearOutSlowInEasing)
+        )
+    }
+
+    Box(
+        modifier = Modifier
+            .graphicsLayer {
+                val progress = animatableProgress.value
+                translationX = startX
+                translationY = progress * screenHeightPx
+                alpha = (1f - (progress * 0.8f)).coerceIn(0f, 1f)
+                rotationZ = progress * 360f
+            }
+            .size(particleSize)
+            .background(color, CircleShape)
+    )
+}
+
 @Composable
 private fun HabitList(
     state: HabitUiState,
     onToggle: (Long) -> Unit,
     onItemLongClick: (HabitUiItem) -> Unit,
+    onHabitClick: (Habit) -> Unit
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -302,14 +606,22 @@ private fun HabitList(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         if (state.selectedTab == HabitTab.TODAY) {
-            item { ProgressHeader(done = state.completedCount, total = state.totalCount) }
+            item(key = "progress_header") {
+                ProgressHeader(done = state.completedCount, total = state.totalCount)
+            }
         }
-        items(state.habits, key = { it.habit.id }) { item ->
+
+        // Ensure unique key is passed here so Compose tracks items smoothly
+        items(
+            items = state.habits,
+            key = { item -> item.habit.id }
+        ) { item ->
             HabitRow(
                 item = item,
                 selectedTab = state.selectedTab,
                 onToggle = { onToggle(item.habit.id) },
-                onLongClick = { onItemLongClick(item) }
+                onLongClick = { onItemLongClick(item) },
+                onClick = { onHabitClick(item.habit) }
             )
         }
     }
@@ -317,15 +629,28 @@ private fun HabitList(
 
 @Composable
 private fun ProgressHeader(done: Int, total: Int) {
-    val fraction = if (total == 0) 0f else done.toFloat() / total
+    val targetFraction = if (total == 0) 0f else done.toFloat() / total
+
+    // Smoothly animate the progress fill when it changes
+    val animatedProgress by animateFloatAsState(
+        targetValue = targetFraction,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessLow
+        ),
+        label = "progress_animation"
+    )
+
     Column(Modifier.padding(bottom = 8.dp)) {
         Text(
             text = "$done of $total done today",
             style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onBackground,
+            fontWeight = FontWeight.SemiBold
         )
         Spacer(Modifier.height(8.dp))
         LinearProgressIndicator(
-            progress = { fraction },
+            progress = { animatedProgress }, // Pass the animated value here
             modifier = Modifier
                 .fillMaxWidth()
                 .height(8.dp)
@@ -333,31 +658,69 @@ private fun ProgressHeader(done: Int, total: Int) {
         )
     }
 }
-
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun HabitRow(
     item: HabitUiItem,
     selectedTab: HabitTab,
     onToggle: () -> Unit,
-    onLongClick: () -> Unit
+    onLongClick: () -> Unit,
+    onClick: () -> Unit
 ) {
     val habit = item.habit
     val habitColor = Color(habit.color)
     val isTodayView = selectedTab == HabitTab.TODAY
+    val view = LocalView.current
+
+    // Optimistic completion state for instant checkbox feedback
+    var localCompleted by remember(item.isCompleted) { mutableStateOf(item.isCompleted) }
+
+    // Card press bounce animation
+    var isPressed by remember { mutableStateOf(false) }
+    val cardScale by animateFloatAsState(
+        targetValue = if (isPressed) 0.97f else 1.0f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "card_scale"
+    )
+
+    // Checkbox scale animation
+    val checkboxScale by animateFloatAsState(
+        targetValue = if (localCompleted) 1.25f else 1.0f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioHighBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "checkbox_scale"
+    )
+
+    // Smooth fade animation for the streak text + flame
+    val streakAlpha by animateFloatAsState(
+        targetValue = if (item.streak > 0) 1f else 0f,
+        animationSpec = tween(durationMillis = 300),
+        label = "streak_fade"
+    )
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .graphicsLayer {
+                scaleX = cardScale
+                scaleY = cardScale
+            }
             .clip(RoundedCornerShape(16.dp))
             .combinedClickable(
-                onClick = { },
-                onLongClick = onLongClick
+                onClick = { onClick() },
+                onLongClick = { onLongClick() }
             ),
         shape = RoundedCornerShape(16.dp),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
@@ -369,30 +732,69 @@ private fun HabitRow(
             ) {
                 Text(habit.icon, fontSize = 22.sp)
             }
+
             Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
+
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.Center
+            ) {
                 Text(
                     text = habit.title,
                     style = MaterialTheme.typography.titleMedium,
-                    textDecoration = if (isTodayView && item.isCompleted) TextDecoration.LineThrough else null,
+                    textDecoration = if (isTodayView && localCompleted) TextDecoration.LineThrough else null,
                 )
-                Text(
-                    text = habit.frequencyLabel() + streakText(item),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+
+                Spacer(Modifier.height(4.dp))
+
+                // Single line layout with frequency and animated streak text
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = habit.frequencyLabel(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+
+                    // Fades in smoothly while reserving space to prevent card jumping
+                    Box(
+                        modifier = Modifier.graphicsLayer {
+                            alpha = streakAlpha
+                        }
+                    ) {
+                        Text(
+                            text = streakText(item),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
             }
 
             if (isTodayView) {
-                Checkbox(
-                    checked = item.isCompleted,
-                    onCheckedChange = { onToggle() },
-                    colors = CheckboxDefaults.colors(checkedColor = habitColor),
-                )
+                Box(
+                    modifier = Modifier.graphicsLayer {
+                        scaleX = checkboxScale
+                        scaleY = checkboxScale
+                    }
+                ) {
+                    Checkbox(
+                        checked = localCompleted,
+                        onCheckedChange = { checked ->
+                            localCompleted = checked
+                            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                            onToggle()
+                        },
+                        colors = CheckboxDefaults.colors(checkedColor = habitColor),
+                    )
+                }
             }
         }
     }
 }
+
 
 private fun streakText(item: HabitUiItem): String {
     if (item.streak <= 0) return ""
@@ -435,6 +837,7 @@ private fun EmptyState(tab: HabitTab, modifier: Modifier = Modifier) {
 private fun HabitActionDialog(
     item: HabitUiItem,
     onDismiss: () -> Unit,
+    onEdit: () -> Unit,
     onArchive: () -> Unit,
     onRestore: () -> Unit,
     onDelete: () -> Unit
@@ -446,6 +849,14 @@ private fun HabitActionDialog(
         title = { Text(item.habit.title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Edit Option
+                TextButton(
+                    onClick = onEdit,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Edit Habit", fontSize = 16.sp)
+                }
+
                 if (isArchived) {
                     TextButton(
                         onClick = onRestore,
@@ -461,6 +872,7 @@ private fun HabitActionDialog(
                         Text("Archive Habit", fontSize = 16.sp)
                     }
                 }
+
                 TextButton(
                     onClick = onDelete,
                     modifier = Modifier.fillMaxWidth()
@@ -475,29 +887,35 @@ private fun HabitActionDialog(
         }
     )
 }
-
 // ---------------------------------------------------------------------------
 // "Add habit" form
 // ---------------------------------------------------------------------------
 
 @Composable
 private fun AddHabitDialog(
+    initialHabit: Habit? = null,
     onDismiss: () -> Unit,
     onConfirm: (name: String, color: Int, icon: String, frequencyType: FrequencyType, targetDays: Int, customDays: List<Int>) -> Unit,
 ) {
-    var name by rememberSaveable { mutableStateOf("") }
-    var color by rememberSaveable { mutableIntStateOf(habitColors.first()) }
-    var icon by rememberSaveable { mutableStateOf(habitIcons.first()) }
-    var frequencyType by rememberSaveable { mutableStateOf(FrequencyType.DAILY) }
+    var name by rememberSaveable { mutableStateOf(initialHabit?.title ?: "") }
+    var color by rememberSaveable { mutableIntStateOf(initialHabit?.color ?: habitColors.first()) }
+    var icon by rememberSaveable { mutableStateOf(initialHabit?.icon ?: habitIcons.first()) }
+    var frequencyType by rememberSaveable {
+        mutableStateOf(initialHabit?.frequency?.type ?: FrequencyType.DAILY)
+    }
 
     val daysMapping = listOf(
         "M" to 2, "T" to 3, "W" to 4, "T" to 5, "F" to 6, "S" to 7, "S" to 1
     )
-    val selectedDays = remember { mutableStateListOf(2, 4, 6) }
+    val selectedDays = remember {
+        mutableStateListOf<Int>().apply {
+            addAll(initialHabit?.frequency?.customDaysOfWeek ?: listOf(2, 4, 6))
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("New Habit") },
+        title = { Text(if (initialHabit == null) "New Habit" else "Edit Habit") },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
@@ -558,8 +976,10 @@ private fun AddHabitDialog(
 
                 if (frequencyType == FrequencyType.CUSTOM) {
                     Text("Select Days", style = MaterialTheme.typography.bodyMedium)
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        daysMapping.forEach { (label, dayCode) ->
+
+                    // Changed from a static Row to a LazyRow so all 7 days can be scrolled through
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(daysMapping) { (label, dayCode) ->
                             val isSelected = selectedDays.contains(dayCode)
                             FilterChip(
                                 selected = isSelected,

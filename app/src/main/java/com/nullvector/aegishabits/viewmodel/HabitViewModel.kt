@@ -16,7 +16,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import java.time.LocalDate
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
+import kotlinx.coroutines.flow.update
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 enum class HabitTab(val title: String) {
     TODAY("Today"),
@@ -33,12 +40,20 @@ data class HabitUiItem(
 
 data class HabitUiState(
     val habits: List<HabitUiItem> = emptyList(),
+    val todayHabits: List<HabitUiItem> = emptyList(),
+    val allHabitsList: List<HabitUiItem> = emptyList(),
+    val archivedHabitsList: List<HabitUiItem> = emptyList(),
     val selectedTab: HabitTab = HabitTab.TODAY,
     val isLoading: Boolean = false,
     val message: String? = null
 ) {
+    // Keep total habits for the active tab view if needed elsewhere
     val totalCount: Int get() = habits.size
     val completedCount: Int get() = habits.count { it.isCompleted }
+
+    // Dedicated Today counts so the progress bar never jumps when switching tabs!
+    val todayTotalCount: Int get() = todayHabits.size
+    val todayCompletedCount: Int get() = todayHabits.count { it.isCompleted }
 }
 
 class HabitViewModel(
@@ -46,8 +61,21 @@ class HabitViewModel(
     private val appContext: Context? = null
 ) : ViewModel() {
 
+    private val currentDate = MutableStateFlow(todayKey())
+    private val currentTab = MutableStateFlow(HabitTab.TODAY)
     private val _message = MutableStateFlow<String?>(null)
-    private val _selectedTab = MutableStateFlow(HabitTab.TODAY)
+
+    fun selectTab(tab: HabitTab) {
+        currentTab.value = tab
+    }
+
+    fun refreshDate() {
+        currentDate.value = todayKey()
+    }
+
+    fun clearMessage() {
+        _message.value = null
+    }
 
     private fun triggerWidgetUpdate(context: Context?) {
         val targetContext = context ?: appContext
@@ -62,41 +90,61 @@ class HabitViewModel(
         }
     }
 
-    // Expose habits mapped to HabitUiItem for Compose UI based on selected tab
+    // --- Single Reactive UI State Flow ---
+    // --- Single Reactive UI State Flow ---
     val uiState: StateFlow<HabitUiState> = combine(
         repository.allHabits,
         repository.allCompletions,
-        _selectedTab,
+        currentDate,
+        currentTab,
         _message
-    ) { habitList, completions, selectedTab, message ->
-        val todayStr = LocalDate.now().toString()
-        val today = LocalDate.now()
+    ) { habits, allCompletions, todayDateKey, tab, msg ->
+        val todayCompletedIds = allCompletions
+            .filter { it.dateString == todayDateKey }
+            .map { it.habitId }
+            .toSet()
 
-        val filteredHabits = habitList.filter { habit ->
-            when (selectedTab) {
-                HabitTab.TODAY -> !habit.isArchived && isDueToday(habit, today)
-                HabitTab.ALL -> !habit.isArchived
-                HabitTab.ARCHIVED -> habit.isArchived
+        // Helper mapper function
+        // Helper mapper function with optimized streak lookup
+        fun mapToUiItems(rawHabits: List<Habit>): List<HabitUiItem> {
+            // Pre-group all completions by habitId once, instead of filtering list inside a loop
+            val completionsByHabitId = allCompletions.groupBy { it.habitId }
+
+            return rawHabits.map { habit ->
+                val isDone = habit.id in todayCompletedIds
+
+                // Pull pre-grouped dates instantly
+                val habitCompletionDates = completionsByHabitId[habit.id]?.map { it.dateString } ?: emptyList()
+                val currentStreak = repository.calculateCurrentStreak(habitCompletionDates)
+
+                HabitUiItem(
+                    habit = habit,
+                    isCompleted = isDone,
+                    streak = currentStreak
+                )
             }
         }
 
-        val habitItems = filteredHabits.map { habit ->
-            val habitCompletions = completions.filter { it.habitId == habit.id }
-            val completedDates = habitCompletions.map { it.dateString }
-            val isCompletedToday = completedDates.contains(todayStr)
-            val streak = repository.calculateCurrentStreak(completedDates)
-            HabitUiItem(
-                habit = habit,
-                isCompleted = isCompletedToday,
-                streak = streak
-            )
+        // Pre-calculate all tab lists simultaneously to eliminate switching lag
+        val todayList = mapToUiItems(habits.filter { !it.isArchived && it.isDueOn(todayDateKey) })
+        val allList = mapToUiItems(habits.filter { !it.isArchived })
+        val archivedList = mapToUiItems(habits.filter { it.isArchived })
+
+        // Pick the active list instantly
+        val activeHabits = when (tab) {
+            HabitTab.TODAY -> todayList
+            HabitTab.ALL -> allList
+            HabitTab.ARCHIVED -> archivedList
         }
 
         HabitUiState(
-            habits = habitItems,
-            selectedTab = selectedTab,
+            habits = activeHabits,
+            todayHabits = todayList,
+            allHabitsList = allList,
+            archivedHabitsList = archivedList,
+            selectedTab = tab,
             isLoading = false,
-            message = message
+            message = msg
         )
     }.stateIn(
         scope = viewModelScope,
@@ -110,14 +158,6 @@ class HabitViewModel(
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = emptyList()
         )
-
-    fun selectTab(tab: HabitTab) {
-        _selectedTab.value = tab
-    }
-
-    fun clearMessage() {
-        _message.value = null
-    }
 
     // --- User Actions with Widget Refresh Triggers ---
 
@@ -159,6 +199,17 @@ class HabitViewModel(
         }
     }
 
+    fun toggleHabit(habitId: Long) {
+        viewModelScope.launch {
+            try {
+                refreshDate()
+                repository.toggleHabitCompletion(habitId, currentDate.value)
+            } catch (e: Exception) {
+                _message.value = "Couldn't update habit"
+            }
+        }
+    }
+
     fun archiveHabit(habit: Habit, context: Context? = null) {
         viewModelScope.launch {
             repository.updateHabit(habit.copy(isArchived = true))
@@ -196,38 +247,69 @@ class HabitViewModel(
 
     fun toggleCompletion(habitId: Long, context: Context? = null) {
         viewModelScope.launch {
-            val todayStr = LocalDate.now().toString()
+            val todayStr = todayKey()
             repository.toggleHabitCompletion(habitId, todayStr)
             triggerWidgetUpdate(context)
         }
     }
 
-    private fun isDueToday(habit: Habit, today: LocalDate): Boolean {
-        return when (habit.frequency.type) {
-            FrequencyType.DAILY -> true
-            FrequencyType.WEEKLY -> {
-                val createdTime = if (habit.createdAt > 0L) habit.createdAt else System.currentTimeMillis()
-                val createdDayOfWeek = java.time.Instant.ofEpochMilli(createdTime)
-                    .atZone(java.time.ZoneId.systemDefault())
-                    .dayOfWeek
-                today.dayOfWeek == createdDayOfWeek
-            }
-            FrequencyType.CUSTOM -> {
-                if (habit.frequency.customDaysOfWeek.isEmpty()) {
-                    true
-                } else {
-                    val todayCustomCode = when (today.dayOfWeek) {
-                        java.time.DayOfWeek.MONDAY -> 2
-                        java.time.DayOfWeek.TUESDAY -> 3
-                        java.time.DayOfWeek.WEDNESDAY -> 4
-                        java.time.DayOfWeek.THURSDAY -> 5
-                        java.time.DayOfWeek.FRIDAY -> 6
-                        java.time.DayOfWeek.SATURDAY -> 7
-                        java.time.DayOfWeek.SUNDAY -> 1
-                    }
-                    todayCustomCode in habit.frequency.customDaysOfWeek
-                }
+    // --- Helper Functions ---
+
+    private fun Habit.isDueOn(dateString: String): Boolean = when (frequency.type) {
+        FrequencyType.DAILY -> true
+        FrequencyType.WEEKLY -> {
+            val createdTime = if (createdAt > 0L) createdAt else System.currentTimeMillis()
+            val createdDateKey = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(createdTime))
+            weekdayOf(createdDateKey) == weekdayOf(dateString)
+        }
+        FrequencyType.CUSTOM -> {
+            if (frequency.customDaysOfWeek.isNotEmpty()) {
+                weekdayOf(dateString) in frequency.customDaysOfWeek
+            } else {
+                true
             }
         }
     }
-}
+
+    private fun weekdayOf(dateString: String): Int {
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        val date = sdf.parse(dateString) ?: Date()
+        return Calendar.getInstance().apply { time = date }.get(Calendar.DAY_OF_WEEK)
+    }
+
+    private fun todayKey(): String =
+        SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+
+
+    // --- Habit Detail State & Logic (INSIDE HabitViewModel class) ---
+    private val _detailUiState = MutableStateFlow(HabitDetailUiState())
+    val detailUiState: StateFlow<HabitDetailUiState> = _detailUiState.asStateFlow()
+
+    fun openHabitDetail(habit: Habit) {
+        viewModelScope.launch {
+            _detailUiState.update { it.copy(selectedHabit = habit, isLoading = true) }
+
+            val completionList = repository.getCompletionsListForHabit(habit.id)
+
+            _detailUiState.update {
+                it.copy(
+                    completions = completionList,
+                    isLoading = false
+                )
+            }
+        }
+    }
+
+    fun closeHabitDetail() {
+        _detailUiState.update { HabitDetailUiState() }
+    }
+
+} // <--- Class closes HERE!
+
+// Place HabitDetailUiState OUTSIDE the class at the very bottom
+data class HabitDetailUiState(
+    val selectedHabit: Habit? = null,
+    val completions: List<HabitCompletion> = emptyList(),
+    val isLoading: Boolean = false
+)
+
