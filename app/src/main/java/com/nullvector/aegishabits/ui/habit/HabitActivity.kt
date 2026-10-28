@@ -124,7 +124,7 @@ import androidx.compose.animation.core.Animatable
 import kotlinx.coroutines.delay
 import androidx.compose.ui.unit.Dp
 import androidx.compose.animation.Crossfade
-
+import com.nullvector.aegishabits.ui.components.HabitDetailBottomSheet
 
 class HabitActivity : ComponentActivity() {
 
@@ -135,23 +135,37 @@ class HabitActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // 1. Read saved preference early before layout inflates
+        val sharedPreferences = getSharedPreferences("aegis_habits_prefs", MODE_PRIVATE)
+        val isSystemDark = (resources.configuration.uiMode and
+                android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+                android.app.UiModeManager.MODE_NIGHT_YES
+        val isDarkModeSaved = sharedPreferences.getBoolean("is_dark_mode", isSystemDark)
+
+        // 2. Set the window background color dynamically to prevent the white flash
+        window.decorView.setBackgroundColor(
+            if (isDarkModeSaved) android.graphics.Color.parseColor("#121212") // Dark background
+            else android.graphics.Color.parseColor("#FFFBFE")                 // Light background
+        )
+
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
         setContent {
-            var isDarkMode by rememberSaveable { mutableStateOf(false) }
+            var isDarkMode by rememberSaveable { mutableStateOf(isDarkModeSaved) }
 
             AegisHabitsTheme(darkTheme = isDarkMode) {
-                // Crossfade the entire content tree smoothly on the GPU layer
-                Crossfade(
-                    targetState = isDarkMode,
-                    animationSpec = tween(durationMillis = 350),
-                    label = "root_theme_crossfade"
-                ) { dark ->
-                    // Pass the current dark state down
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
                     HabitScreen(
                         viewModel = viewModel,
-                        isDarkMode = dark,
-                        onToggleTheme = { isDarkMode = !isDarkMode }
+                        isDarkMode = isDarkMode,
+                        onToggleTheme = {
+                            isDarkMode = !isDarkMode
+                            sharedPreferences.edit().putBoolean("is_dark_mode", isDarkMode).apply()
+                        }
                     )
                 }
             }
@@ -215,6 +229,7 @@ fun HabitScreen(
     onToggleTheme: () -> Unit
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val detailUiState by viewModel.detailUiState.collectAsStateWithLifecycle()
     var showAddDialog by rememberSaveable { mutableStateOf(false) }
     var selectedHabitForAction by remember { mutableStateOf<HabitUiItem?>(null) }
     var habitToEdit by remember { mutableStateOf<HabitUiItem?>(null) }
@@ -407,7 +422,8 @@ fun HabitScreen(
                                     userJustToggled = true // <--- Add this right here!
                                     viewModel.toggleCompletion(habitId)
                                 },
-                                onItemLongClick = { habitItem -> selectedHabitForAction = habitItem }
+                                onItemLongClick = { habitItem -> selectedHabitForAction = habitItem },
+                                onHabitClick = { habit -> viewModel.openHabitDetail(habit) }
                             )
                         }
                     }
@@ -417,6 +433,15 @@ fun HabitScreen(
                     ConfettiEffect(modifier = Modifier.fillMaxSize())
                 }
             }
+        }
+        detailUiState.selectedHabit?.let { habit ->
+            HabitDetailBottomSheet(
+                habit = habit,
+                completions = detailUiState.completions,
+                onDismiss = {
+                    viewModel.closeHabitDetail()
+                }
+            )
         }
     }
 
@@ -573,6 +598,7 @@ private fun HabitList(
     state: HabitUiState,
     onToggle: (Long) -> Unit,
     onItemLongClick: (HabitUiItem) -> Unit,
+    onHabitClick: (Habit) -> Unit
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -594,7 +620,8 @@ private fun HabitList(
                 item = item,
                 selectedTab = state.selectedTab,
                 onToggle = { onToggle(item.habit.id) },
-                onLongClick = { onItemLongClick(item) }
+                onLongClick = { onItemLongClick(item) },
+                onClick = { onHabitClick(item.habit) }
             )
         }
     }
@@ -618,6 +645,8 @@ private fun ProgressHeader(done: Int, total: Int) {
         Text(
             text = "$done of $total done today",
             style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onBackground,
+            fontWeight = FontWeight.SemiBold
         )
         Spacer(Modifier.height(8.dp))
         LinearProgressIndicator(
@@ -635,7 +664,8 @@ private fun HabitRow(
     item: HabitUiItem,
     selectedTab: HabitTab,
     onToggle: () -> Unit,
-    onLongClick: () -> Unit
+    onLongClick: () -> Unit,
+    onClick: () -> Unit
 ) {
     val habit = item.habit
     val habitColor = Color(habit.color)
@@ -681,16 +711,10 @@ private fun HabitRow(
                 scaleY = cardScale
             }
             .clip(RoundedCornerShape(16.dp))
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onPress = {
-                        isPressed = true
-                        tryAwaitRelease()
-                        isPressed = false
-                    },
-                    onLongPress = { onLongClick() }
-                )
-            },
+            .combinedClickable(
+                onClick = { onClick() },
+                onLongClick = { onLongClick() }
+            ),
         shape = RoundedCornerShape(16.dp),
     ) {
         Row(
