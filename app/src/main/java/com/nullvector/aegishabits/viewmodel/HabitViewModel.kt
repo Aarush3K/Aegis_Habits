@@ -21,9 +21,7 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.flow.update
-import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
 import com.nullvector.aegishabits.notification.HabitReminderManager
 
 enum class HabitTab(val title: String) {
@@ -70,6 +68,28 @@ class HabitViewModel(
     private val currentTab = MutableStateFlow(HabitTab.TODAY)
     private val _message = MutableStateFlow<String?>(null)
 
+    fun applyShieldIfMissed(habit: Habit): Habit {
+        if (habit.shieldsAvailable > 0) {
+            // Consume 1 shield to protect the streak
+            return habit.copy(shieldsAvailable = habit.shieldsAvailable - 1)
+        }
+        return habit
+    }
+
+    fun checkAndAwardShields(habit: Habit, currentStreak: Int): Habit {
+        // Grant a shield every 7 days of streak, up to a max of 3 shields
+        val maxShields = 3
+        val nextMilestone = habit.lastShieldMilestone + 7
+        if (currentStreak >= nextMilestone && habit.shieldsAvailable < maxShields) {
+            val earnedCount = (currentStreak / 7) - (habit.lastShieldMilestone / 7)
+            val shieldsToAdd = minOf(maxShields - habit.shieldsAvailable, maxOf(1, earnedCount))
+            return habit.copy(
+                shieldsAvailable = minOf(maxShields, habit.shieldsAvailable + shieldsToAdd),
+                lastShieldMilestone = (currentStreak / 7) * 7
+            )
+        }
+        return habit
+    }
 
     // Inside HabitViewModel methods:
 
@@ -134,7 +154,6 @@ class HabitViewModel(
     }
 
     // --- Single Reactive UI State Flow ---
-    // --- Single Reactive UI State Flow ---
     val uiState: StateFlow<HabitUiState> = combine(
         repository.allHabits,
         repository.allCompletions,
@@ -147,7 +166,6 @@ class HabitViewModel(
             .map { it.habitId }
             .toSet()
 
-        // Helper mapper function
         // Helper mapper function with optimized streak lookup
         fun mapToUiItems(rawHabits: List<Habit>): List<HabitUiItem> {
             // Pre-group all completions by habitId once, instead of filtering list inside a loop
@@ -158,7 +176,7 @@ class HabitViewModel(
 
                 // Pull pre-grouped dates instantly
                 val habitCompletionDates = completionsByHabitId[habit.id]?.map { it.dateString } ?: emptyList()
-                val currentStreak = repository.calculateCurrentStreak(habitCompletionDates)
+                val currentStreak = repository.calculateCurrentStreak(habitCompletionDates, habit.shieldsAvailable)
 
                 HabitUiItem(
                     habit = habit,
@@ -292,7 +310,50 @@ class HabitViewModel(
     fun toggleCompletion(habitId: Long, context: Context? = null) {
         viewModelScope.launch {
             val todayStr = todayKey()
+            val habit = habits.value.find { it.id == habitId } ?: repository.getHabitById(habitId)
+
+            // 1. Fetch existing completion dates before toggling today
+            val completionList = repository.getCompletionsListForHabit(habitId)
+            val completionDates = completionList.map { it.dateString }
+            val isCompletedToday = completionDates.contains(todayStr)
+
+            var currentHabit = habit
+            var missedDays = 0
+
+            // 2. Check if a shield is needed (if completing today and last completion was more than 1 day ago)
+            if (currentHabit != null && !isCompletedToday && completionDates.isNotEmpty()) {
+                val latestDateStr = completionDates.filter { it != todayStr }.maxOrNull()
+                if (latestDateStr != null) {
+                    val latestLocalDate = java.time.LocalDate.parse(latestDateStr)
+                    val todayLocalDate = java.time.LocalDate.parse(todayStr)
+                    val daysBetween = java.time.temporal.ChronoUnit.DAYS.between(latestLocalDate, todayLocalDate).toInt()
+
+                    if (daysBetween > 1) {
+                        missedDays = daysBetween - 1
+                        if (currentHabit.shieldsAvailable >= missedDays) {
+                            currentHabit = currentHabit.copy(shieldsAvailable = currentHabit.shieldsAvailable - missedDays)
+                            repository.updateHabit(currentHabit)
+                        }
+                    }
+                }
+            }
+
+            // 3. Proceed with standard toggle for today
             repository.toggleHabitCompletion(habitId, todayStr)
+
+            // 4. Update milestones / award new shields if earned
+            val updatedCompletionList = repository.getCompletionsListForHabit(habitId)
+            val updatedDates = updatedCompletionList.map { it.dateString }
+            val effectiveShields = (currentHabit?.shieldsAvailable ?: 0) + missedDays
+            val newStreak = repository.calculateCurrentStreak(updatedDates, effectiveShields)
+
+            if (currentHabit != null) {
+                val awardedHabit = checkAndAwardShields(currentHabit, newStreak)
+                if (awardedHabit.shieldsAvailable != currentHabit.shieldsAvailable) {
+                    repository.updateHabit(awardedHabit)
+                }
+            }
+
             triggerWidgetUpdate(context)
         }
     }
@@ -324,8 +385,7 @@ class HabitViewModel(
     private fun todayKey(): String =
         SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
 
-
-    // --- Habit Detail State & Logic (INSIDE HabitViewModel class) ---
+    // --- Habit Detail State & Logic ---
     private val _detailUiState = MutableStateFlow(HabitDetailUiState())
     val detailUiState: StateFlow<HabitDetailUiState> = _detailUiState.asStateFlow()
 
@@ -347,13 +407,10 @@ class HabitViewModel(
     fun closeHabitDetail() {
         _detailUiState.update { HabitDetailUiState() }
     }
+}
 
-} // <--- Class closes HERE!
-
-// Place HabitDetailUiState OUTSIDE the class at the very bottom
 data class HabitDetailUiState(
     val selectedHabit: Habit? = null,
     val completions: List<HabitCompletion> = emptyList(),
     val isLoading: Boolean = false
 )
-

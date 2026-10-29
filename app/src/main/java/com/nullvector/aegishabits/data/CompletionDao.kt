@@ -62,4 +62,6 @@ interface CompletionDao {
         WHERE c1.habitId = :habitIdA AND c2.habitId = :habitIdB
     """)
     suspend fun getJointCompletionDates(habitIdA: Long, habitIdB: Long): List<String>
+
+
 }
