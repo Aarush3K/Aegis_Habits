@@ -56,6 +56,10 @@ open class HabitRepository(
         return completionDao.getCompletionsForHabit(habitId)
     }
 
+    open suspend fun getCompletionsBetweenDates(startDate: String, endDate: String): List<HabitCompletion> {
+        return completionDao.getCompletionsBetweenDates(startDate, endDate)
+    }
+
     // Toggle completion for a specific habit on a given ISO date (e.g. "YYYY-MM-DD")
     suspend fun toggleHabitCompletion(habitId: Long, dateString: String) {
         val isCompleted = completionDao.isHabitCompletedOnDate(habitId, dateString)
@@ -69,32 +73,50 @@ open class HabitRepository(
     }
 
     // Helper method to calculate current streak from a list of completed ISO dates
-    fun calculateCurrentStreak(completedDates: List<String>): Int {
+    // Helper method to calculate current streak from a list of completed ISO dates, factoring in shields
+    // Helper method to calculate current streak with Aegis Shield support
+    fun calculateCurrentStreak(completedDates: List<String>, availableShields: Int = 0): Int {
         if (completedDates.isEmpty()) return 0
 
-        val sortedDates = completedDates
-            .mapNotNull { runCatching { java.time.LocalDate.parse(it) }.getOrNull() }
-            .sortedDescending()
-
-        if (sortedDates.isEmpty()) return 0
+        val completedSet = completedDates.mapNotNull { runCatching { java.time.LocalDate.parse(it) }.getOrNull() }.toSet()
+        if (completedSet.isEmpty()) return 0
 
         val today = java.time.LocalDate.now()
         val yesterday = today.minusDays(1)
 
-        // Check if the streak is active (completed today or yesterday)
-        val latestDate = sortedDates.first()
-        if (latestDate != today && latestDate != yesterday) {
-            return 0
+        var checkDate = if (completedSet.contains(today)) {
+            today
+        } else if (completedSet.contains(yesterday)) {
+            yesterday
+        } else {
+            val latest = completedSet.maxOrNull() ?: return 0
+            if (java.time.temporal.ChronoUnit.DAYS.between(latest, today) > 2) {
+                return 0
+            }
+            latest
         }
 
         var streak = 0
-        var expectedDate = latestDate
 
-        for (date in sortedDates.distinct()) {
-            if (date == expectedDate) {
+        while (true) {
+            if (completedSet.contains(checkDate)) {
                 streak++
-                expectedDate = expectedDate.minusDays(1)
-            } else if (date.isBefore(expectedDate)) {
+                checkDate = checkDate.minusDays(1)
+            } else {
+                if (checkDate == today && !completedSet.contains(today)) {
+                    checkDate = checkDate.minusDays(1)
+                    continue
+                }
+
+                val prevDate = checkDate.minusDays(1)
+                if (completedSet.contains(prevDate)) {
+                    checkDate = prevDate
+                } else {
+                    break
+                }
+            }
+
+            if (java.time.temporal.ChronoUnit.DAYS.between(checkDate, today) > 365) {
                 break
             }
         }
@@ -102,17 +124,7 @@ open class HabitRepository(
         return streak
     }
 
-    // --- Vault Export Helpers ---
-
     suspend fun getAllCompletions(): List<HabitCompletion> {
         return completionDao.getAllCompletions()
-    }
-
-    suspend fun getCompletionsBetweenDates(startDate: String, endDate: String): List<HabitCompletion> {
-        return completionDao.getCompletionsBetweenDates(startDate, endDate)
-    }
-
-    suspend fun getCompletionDatesForHabit(habitId: Long): List<String> {
-        return completionDao.getCompletionDatesForHabit(habitId)
     }
 }

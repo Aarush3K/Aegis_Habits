@@ -100,7 +100,7 @@ class AnalyticsViewModel(
             for (habit in activeHabits) {
                 val habitCompletions = repository.getCompletionsListForHabit(habit.id)
                 val completionDates = habitCompletions.map { it.dateString }
-                val streak = repository.calculateCurrentStreak(completionDates)
+                val streak = repository.calculateCurrentStreak(completionDates, habit.shieldsAvailable)
                 if (streak > maxStreak) maxStreak = streak
 
                 // Calculate individual completion rate over the selected timeframe

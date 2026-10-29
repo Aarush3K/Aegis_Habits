@@ -786,10 +786,22 @@ private fun HabitRow(
 }
 
 private fun streakText(item: HabitUiItem): String {
-    if (item.streak <= 0) return ""
-    val unit = if (item.habit.frequency.type == FrequencyType.WEEKLY) "week" else "day"
-    val plural = if (item.streak == 1) "" else "s"
-    return "  ·  ${item.streak} $unit$plural streak 🔥"
+    val streakPart = if (item.streak > 0) {
+        val unit = if (item.habit.frequency.type == FrequencyType.WEEKLY) "week" else "day"
+        val plural = if (item.streak == 1) "" else "s"
+        "  ·  ${item.streak} $unit$plural streak 🔥"
+    } else {
+        ""
+    }
+
+    val shieldPart = if (item.habit.shieldsAvailable > 0) {
+        val separator = if (streakPart.isNotEmpty()) "  ·  " else "  ·  "
+        "${separator}🛡️x${item.habit.shieldsAvailable}"
+    } else {
+        ""
+    }
+
+    return "$streakPart$shieldPart"
 }
 
 @Composable

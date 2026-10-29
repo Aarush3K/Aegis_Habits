@@ -14,5 +14,7 @@ data class Habit(
     val isArchived: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     val color: Int = 0xFF3B6FE0.toInt(),
-    val icon: String = "💪"
+    val icon: String = "💪",
+    val shieldsAvailable: Int = 1, // Aegis Streak Shield count
+    val lastShieldMilestone: Int = 0 // Streak milestone where last shield was earned
 )
