@@ -17,7 +17,7 @@ import androidx.room.PrimaryKey
     ],
     indices = [Index(value = ["habitId"])]
 )
-data class PleHabitCompletion(
+data class HabitCompletion(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
     val habitId: Long,
